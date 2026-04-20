@@ -7,11 +7,14 @@ class BattleController {
   BattleController({
     TurnEngine engine = const TurnEngine(),
     MatchRules rules = defaultBattleRules,
-    List<PieceDefinition> catalog = defaultBattleCatalog,
+    List<PieceDefinition>? catalog,
   }) : _engine = engine,
        _rules = rules,
-       _catalog = List<PieceDefinition>.from(catalog),
-       _state = engine.newMatch(draftCatalog: catalog, rules: rules);
+       _catalog = List<PieceDefinition>.from(catalog ?? defaultBattleCatalog),
+       _state = engine.newMatch(
+         draftCatalog: catalog ?? defaultBattleCatalog,
+         rules: rules,
+       );
 
   final TurnEngine _engine;
   final MatchRules _rules;

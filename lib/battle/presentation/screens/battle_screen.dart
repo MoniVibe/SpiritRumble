@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:bullethole_shared/bullethole_shared.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
@@ -11,8 +13,8 @@ import '../../application/target_preview.dart';
 import '../../application/target_resolver.dart';
 import '../../domain/battle_view_models.dart';
 import '../painters/targeting_line_painter.dart';
-import '../widgets/board_zone.dart';
 import '../widgets/hand_zone.dart';
+import '../widgets/spirit_card_view.dart';
 
 class SpritRumbleScreen extends StatefulWidget {
   const SpritRumbleScreen({super.key});
@@ -33,6 +35,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
 
   final GlobalKey _interactionLayerKey = GlobalKey();
   final GlobalKey _newUnitDropKey = GlobalKey();
+  final GlobalKey _playerHandDropKey = GlobalKey();
   final Map<String, GlobalKey> _unitDropKeys = <String, GlobalKey>{};
   final BattleController _controller = BattleController();
   final DropTargetResolver _targetResolver = const DropTargetResolver();
@@ -41,6 +44,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   HandDragSession? _dragSession;
   DropTargetPreview? _hoverTarget;
   Offset _snapFrom = Offset.zero;
+  bool _logExpanded = false;
 
   BattleViewState get _view => _controller.viewState;
 
@@ -86,6 +90,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     setState(() {
       _controller.resetMatch();
       _clearDragState();
+      _logExpanded = false;
     });
   }
 
@@ -99,175 +104,533 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   Widget build(BuildContext context) {
     final view = _view;
     final state = view.gameState;
-    final active = view.activePlayer;
-    final opponent = view.opposingPlayer;
     final winner = view.winnerIndex;
 
     return Scaffold(
       body: GameBackdrop(
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              final flex = _BandFlex.forHeight(constraints.maxHeight);
+              return Padding(
+                padding: const EdgeInsets.all(8),
+                child: Stack(
+                  key: _interactionLayerKey,
                   children: <Widget>[
-                    Text(
-                      'Sprit Rumble',
-                      style: Theme.of(context).textTheme.headlineSmall,
+                    Column(
+                      children: <Widget>[
+                        Flexible(
+                          flex: flex.opponentHand,
+                          child: _buildOpponentHandBand(view),
+                        ),
+                        Flexible(
+                          flex: flex.opponentShaman,
+                          child: _buildShamanBand(
+                            player: view.opposingPlayer,
+                            isActive: state.activePlayerIndex == 1,
+                            title: 'Opponent Shaman',
+                            onTapDirectAttack:
+                                view.selectedAttackerUnitId != null &&
+                                    view.isMainPhase &&
+                                    view.opposingPlayer.units.isEmpty
+                                ? () => _dispatch(
+                                    BattleIntents.attack(
+                                      view.selectedAttackerUnitId!,
+                                    ),
+                                  )
+                                : null,
+                          ),
+                        ),
+                        Flexible(
+                          flex: flex.opponentTable,
+                          child: _buildOpponentTableBand(view),
+                        ),
+                        Flexible(
+                          flex: flex.playerTable,
+                          child: _buildPlayerTableBand(view),
+                        ),
+                        Flexible(
+                          flex: flex.playerShaman,
+                          child: _buildPlayerShamanBand(view),
+                        ),
+                        Flexible(
+                          flex: flex.playerHand,
+                          child: _buildPlayerHandBand(view),
+                        ),
+                      ],
                     ),
-                    const Spacer(),
-                    FilledButton.tonal(
-                      onPressed: _resetMatch,
-                      child: const Text('New Match'),
-                    ),
+                    _buildHudOverlay(state, winner),
+                    _buildTargetingLineOverlay(),
+                    if (view.isDraftPhase) _buildDraftTrayOverlay(view),
+                    _buildEventLogOverlay(state),
+                    if (view.lastError != null)
+                      Positioned(
+                        left: 8,
+                        right: 8,
+                        bottom: _logExpanded ? 268 : 56,
+                        child: Card(
+                          color: Theme.of(context).colorScheme.errorContainer,
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Text('Rule denial: ${view.lastError}'),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: <Widget>[
-                    Chip(label: Text('Turn ${state.turnNumber}')),
-                    Chip(label: Text('Active: ${active.id}')),
-                    Chip(label: Text('Phase: ${phaseLabel(state.phase)}')),
-                    Chip(label: Text('Pool ${state.pool.length}/5')),
-                    if (winner != null)
-                      Chip(label: Text('Winner: ${state.players[winner].id}')),
-                  ],
-                ),
-                if (view.lastError != null) ...<Widget>[
-                  const SizedBox(height: 8),
-                  Text('Last rule denial: ${view.lastError}'),
-                ],
-                const SizedBox(height: 10),
-                _ShamanSummary(player: active, caption: 'Current'),
-                const SizedBox(height: 8),
-                _ShamanSummary(player: opponent, caption: 'Opponent'),
-                const SizedBox(height: 10),
-                if (view.isDraftPhase) _buildDraftPanel(state),
-                if (view.isMainPhase) _buildMainPanel(state, view),
-                if (view.isChooseDefendersPhase) _buildDefenderPanel(state),
-                const SizedBox(height: 10),
-                Text(
-                  'Event Log',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: Card(
-                    child: ListView.builder(
-                      reverse: true,
-                      padding: const EdgeInsets.all(12),
-                      itemCount: state.eventLog.length,
-                      itemBuilder: (BuildContext context, int index) {
-                        final reversedIndex = state.eventLog.length - 1 - index;
-                        return Text('• ${state.eventLog[reversedIndex]}');
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              );
+            },
           ),
         ),
       ),
     );
   }
 
-  Widget _buildDraftPanel(GameState state) {
-    return Expanded(
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildHudOverlay(GameState state, int? winner) {
+    return Positioned(
+      left: 8,
+      top: 8,
+      right: 8,
+      child: IgnorePointer(
+        ignoring: true,
+        child: Wrap(
+          spacing: 6,
+          runSpacing: 6,
           children: <Widget>[
-            Text(
-              'Draft From Shared Pool',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: state.pool
-                  .map(
-                    (piece) => FilledButton.tonal(
-                      onPressed: () => _dispatch(
-                        BattleIntents.draftFromPool(piece.instanceId),
-                      ),
-                      child: Text(pieceLabel(piece.definition)),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
+            const Chip(label: Text('Sprit Rumble')),
+            Chip(label: Text('Turn ${state.turnNumber}')),
+            Chip(label: Text('Active: ${state.activePlayer.id}')),
+            Chip(label: Text('Phase: ${phaseLabel(state.phase)}')),
+            Chip(label: Text('Pool ${state.pool.length}/5')),
+            if (winner != null)
+              Chip(label: Text('Winner: ${state.players[winner].id}')),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildMainPanel(GameState state, BattleViewState view) {
-    return Expanded(
-      child: Stack(
-        key: _interactionLayerKey,
+  Widget _buildOpponentHandBand(BattleViewState view) {
+    final count = view.opposingPlayer.hand.length;
+    final shown = math.min(count, 8);
+    return _BandFrame(
+      title: 'Opponent Hand',
+      child: Row(
         children: <Widget>[
-          SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Text('Cards: $count'),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(
+                spacing: 4,
+                children: List<Widget>.generate(shown, (int index) {
+                  return Container(
+                    width: 22,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      color: Colors.white12,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShamanBand({
+    required PlayerState player,
+    required bool isActive,
+    required String title,
+    VoidCallback? onTapDirectAttack,
+  }) {
+    return _BandFrame(
+      title: title,
+      child: Row(
+        children: <Widget>[
+          CircleAvatar(
+            radius: 16,
+            child: Text(player.id.substring(player.id.length - 1)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 4,
               children: <Widget>[
-                Text(
-                  'Hand (Drag To Play)',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  height: _handCardHeight + 38,
-                  child: HandZone(
-                    activePlayer: view.activePlayer,
-                    phase: state.phase,
-                    cardWidth: _handCardWidth,
-                    cardHeight: _handCardHeight,
-                    dragSession: _dragSession,
-                    onDragStart: _onHandDragStart,
-                    onDragUpdate: _onHandDragUpdate,
-                    onDragEnd: _onHandDragEnd,
-                    onDragCancel: _onHandDragCancel,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                BoardZone(
-                  activePlayer: view.activePlayer,
-                  opponentPlayer: view.opposingPlayer,
-                  selectedAttackerUnitId: view.selectedAttackerUnitId,
-                  hoverTarget: _hoverTarget,
-                  newUnitDropKey: _newUnitDropKey,
-                  unitDropKeyFor: _unitDropKey,
-                  onChooseAttacker: (String unitId, int pieceIndex) {
-                    final picked = _dispatch(
-                      BattleIntents.chooseAttacker(unitId, pieceIndex),
-                    );
-                    if (picked) {
-                      setState(() {
-                        _controller.selectAttackerUnit(unitId);
-                      });
-                    }
-                  },
-                  onAttack: (String attackerUnitId, String? targetUnitId) {
-                    _dispatch(
-                      BattleIntents.attack(
-                        attackerUnitId,
-                        targetUnitId: targetUnitId,
-                      ),
-                    );
-                  },
-                  onEndTurn: () => _dispatch(BattleIntents.endTurn()),
-                ),
+                Text(player.id),
+                Text('HP ${player.health}'),
+                Text('Hand ${player.hand.length}'),
+                Text('Units ${player.units.length}'),
+                if (isActive) const Chip(label: Text('Active')),
               ],
             ),
           ),
-          _buildTargetingLineOverlay(),
+          if (onTapDirectAttack != null)
+            FilledButton.tonal(
+              onPressed: onTapDirectAttack,
+              child: const Text('Direct Attack'),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildOpponentTableBand(BattleViewState view) {
+    return _BandFrame(
+      title: 'Opponent Table',
+      child: view.opposingPlayer.units.isEmpty
+          ? const Text('No enemy units.')
+          : ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemBuilder: (BuildContext context, int index) {
+                final unit = view.opposingPlayer.units[index];
+                final canTarget =
+                    view.selectedAttackerUnitId != null && view.isMainPhase;
+                return _UnitCard(
+                  unit: unit,
+                  selectedUnitId: null,
+                  onPieceTap: null,
+                  onUnitTap: canTarget
+                      ? () => _dispatch(
+                          BattleIntents.attack(
+                            view.selectedAttackerUnitId!,
+                            targetUnitId: unit.unitId,
+                          ),
+                        )
+                      : null,
+                );
+              },
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemCount: view.opposingPlayer.units.length,
+            ),
+    );
+  }
+
+  Widget _buildPlayerTableBand(BattleViewState view) {
+    final active = view.activePlayer;
+    return _BandFrame(
+      title: view.isChooseDefendersPhase
+          ? 'Player Table (Choose Defenders)'
+          : 'Player Table',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (view.isMainPhase)
+            Card(
+              key: _newUnitDropKey,
+              color: _hoverTarget?.kind == DropTargetKind.newUnit
+                  ? Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.28)
+                  : null,
+              child: const ListTile(
+                dense: true,
+                title: Text('Drop Here For New Unit'),
+              ),
+            ),
+          if (active.units.isEmpty)
+            const Expanded(child: Center(child: Text('No units on field.')))
+          else
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemBuilder: (BuildContext context, int index) {
+                  final unit = active.units[index];
+                  final highlighted =
+                      _hoverTarget?.kind == DropTargetKind.existingUnit &&
+                      _hoverTarget?.unitId == unit.unitId;
+                  return Container(
+                    key: _unitDropKey(unit.unitId),
+                    decoration: highlighted
+                        ? BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: Theme.of(context).colorScheme.secondary,
+                              width: 2,
+                            ),
+                          )
+                        : null,
+                    child: _UnitCard(
+                      unit: unit,
+                      selectedUnitId: view.selectedAttackerUnitId,
+                      onPieceTap: (int pieceIndex) {
+                        if (view.isChooseDefendersPhase) {
+                          _dispatch(
+                            BattleIntents.chooseDefender(
+                              unit.unitId,
+                              pieceIndex,
+                            ),
+                          );
+                          return;
+                        }
+                        final picked = _dispatch(
+                          BattleIntents.chooseAttacker(unit.unitId, pieceIndex),
+                        );
+                        if (picked) {
+                          setState(() {
+                            _controller.selectAttackerUnit(unit.unitId);
+                          });
+                        }
+                      },
+                      onUnitTap: null,
+                    ),
+                  );
+                },
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
+                itemCount: active.units.length,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayerShamanBand(BattleViewState view) {
+    final player = view.activePlayer;
+    return _BandFrame(
+      title: 'Player Shaman',
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: <Widget>[
+                CircleAvatar(
+                  radius: 16,
+                  child: Text(player.id.substring(player.id.length - 1)),
+                ),
+                Text(player.id),
+                Text('HP ${player.health}'),
+                Text('Hand ${player.hand.length}'),
+                Text('Units ${player.units.length}'),
+                if (view.gameState.activePlayerIndex == 0)
+                  const Chip(label: Text('Active')),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          if (view.isMainPhase)
+            FilledButton(
+              onPressed: () => _dispatch(BattleIntents.endTurn()),
+              child: const Text('End Turn'),
+            ),
+          if (view.isDraftPhase || view.isChooseDefendersPhase)
+            FilledButton.tonal(
+              onPressed: null,
+              child: Text(view.isDraftPhase ? 'Drafting...' : 'Set Defenders'),
+            ),
+          const SizedBox(width: 8),
+          FilledButton.tonal(
+            onPressed: _resetMatch,
+            child: const Text('New Match'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayerHandBand(BattleViewState view) {
+    return RepaintBoundary(
+      key: _playerHandDropKey,
+      child: DragTarget<PieceInstance>(
+        onWillAcceptWithDetails: (details) {
+          if (!view.isDraftPhase) {
+            return false;
+          }
+          return _controller
+              .canApply(BattleIntents.draftFromPool(details.data.instanceId))
+              .allowed;
+        },
+        onAcceptWithDetails: (details) {
+          _dispatch(BattleIntents.draftFromPool(details.data.instanceId));
+        },
+        builder: (context, candidateData, rejectedData) {
+          final draftHover = candidateData.isNotEmpty && view.isDraftPhase;
+          return _BandFrame(
+            title: 'Player Hand',
+            borderColor: draftHover
+                ? Theme.of(context).colorScheme.primary
+                : (view.isDraftPhase ? Colors.white24 : null),
+            child: HandZone(
+              activePlayer: view.activePlayer,
+              phase: view.gameState.phase,
+              cardWidth: _handCardWidth,
+              cardHeight: _handCardHeight,
+              dragSession: _dragSession,
+              onDragStart: _onHandDragStart,
+              onDragUpdate: _onHandDragUpdate,
+              onDragEnd: _onHandDragEnd,
+              onDragCancel: _onHandDragCancel,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildDraftTrayOverlay(BattleViewState view) {
+    final pool = view.gameState.pool;
+    return Align(
+      alignment: const Alignment(0, -0.1),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: RepaintBoundary(
+            child: Card(
+              color: Theme.of(
+                context,
+              ).colorScheme.surface.withValues(alpha: 0.96),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      'Draft Tray: drag to your hand',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: pool
+                            .map((piece) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8),
+                                child: LongPressDraggable<PieceInstance>(
+                                  data: piece,
+                                  delay: const Duration(milliseconds: 90),
+                                  feedback: Material(
+                                    color: Colors.transparent,
+                                    child: SizedBox(
+                                      width: 92,
+                                      height: 126,
+                                      child: SpiritCardView(
+                                        piece: piece.definition,
+                                        width: 92,
+                                        height: 126,
+                                        elevated: true,
+                                        angle: 0,
+                                      ),
+                                    ),
+                                  ),
+                                  childWhenDragging: Opacity(
+                                    opacity: 0.22,
+                                    child: SizedBox(
+                                      width: 92,
+                                      height: 126,
+                                      child: SpiritCardView(
+                                        piece: piece.definition,
+                                        width: 92,
+                                        height: 126,
+                                        elevated: false,
+                                        angle: 0,
+                                      ),
+                                    ),
+                                  ),
+                                  child: GestureDetector(
+                                    onTap: () => _dispatch(
+                                      BattleIntents.draftFromPool(
+                                        piece.instanceId,
+                                      ),
+                                    ),
+                                    child: SizedBox(
+                                      width: 92,
+                                      height: 126,
+                                      child: SpiritCardView(
+                                        piece: piece.definition,
+                                        width: 92,
+                                        height: 126,
+                                        elevated: false,
+                                        angle: 0,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            })
+                            .toList(growable: false),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEventLogOverlay(GameState state) {
+    final compact = !_logExpanded;
+    return Positioned(
+      right: 8,
+      bottom: 8,
+      child: RepaintBoundary(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: compact ? 188 : 360,
+          height: compact ? 40 : 250,
+          curve: Curves.easeOutCubic,
+          child: Card(
+            child: compact
+                ? InkWell(
+                    onTap: () => setState(() => _logExpanded = true),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Row(
+                        children: <Widget>[
+                          const Icon(Icons.history, size: 18),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Event Log ${state.eventLog.length}',
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const Icon(Icons.expand_less),
+                        ],
+                      ),
+                    ),
+                  )
+                : Column(
+                    children: <Widget>[
+                      ListTile(
+                        dense: true,
+                        title: const Text('Event Log'),
+                        subtitle: Text('${state.eventLog.length} entries'),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.expand_more),
+                          onPressed: () => setState(() => _logExpanded = false),
+                        ),
+                      ),
+                      Expanded(
+                        child: ListView.builder(
+                          reverse: true,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          itemCount: state.eventLog.length,
+                          itemBuilder: (BuildContext context, int index) {
+                            final reversedIndex =
+                                state.eventLog.length - 1 - index;
+                            return Text('• ${state.eventLog[reversedIndex]}');
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
       ),
     );
   }
@@ -436,95 +799,154 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     final to = render.globalToLocal(targetRect.center);
     return Positioned.fill(
       child: IgnorePointer(
-        child: CustomPaint(
-          painter: TargetingLinePainter(from: from, to: to),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDefenderPanel(GameState state) {
-    final active = state.activePlayer;
-    return Expanded(
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(
-              'Choose Defenders For Your Units',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            if (active.units.isEmpty)
-              const Text('No units: turn will auto-advance.')
-            else
-              Column(
-                children: active.units
-                    .map(
-                      (unit) => Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: <Widget>[
-                              Text(
-                                '${unit.unitId} (${unit.defendingPieceIndex == null ? 'unset' : 'defender ${unit.defendingPieceIndex}'})',
-                              ),
-                              const SizedBox(height: 6),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: List<Widget>.generate(
-                                  unit.pieces.length,
-                                  (int i) {
-                                    return FilledButton.tonal(
-                                      onPressed: () => _dispatch(
-                                        BattleIntents.chooseDefender(
-                                          unit.unitId,
-                                          i,
-                                        ),
-                                      ),
-                                      child: Text('Defend With #$i'),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-          ],
+        child: RepaintBoundary(
+          child: CustomPaint(
+            painter: TargetingLinePainter(from: from, to: to),
+          ),
         ),
       ),
     );
   }
 }
 
-class _ShamanSummary extends StatelessWidget {
-  const _ShamanSummary({required this.player, required this.caption});
+class _BandFrame extends StatelessWidget {
+  const _BandFrame({
+    required this.title,
+    required this.child,
+    this.borderColor,
+  });
 
-  final PlayerState player;
-  final String caption;
+  final String title;
+  final Widget child;
+  final Color? borderColor;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Wrap(
-          spacing: 10,
-          runSpacing: 6,
-          children: <Widget>[
-            Text('$caption: ${player.id}'),
-            Text('HP ${player.health}'),
-            Text('Hand ${player.hand.length}'),
-            Text('Units ${player.units.length}'),
-          ],
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final compact = constraints.maxHeight < 56;
+        return Card(
+          margin: const EdgeInsets.symmetric(vertical: 2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: borderColor ?? Colors.white12),
+          ),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: compact ? 6 : 8,
+              vertical: compact ? 4 : 6,
+            ),
+            child: compact
+                ? ClipRect(child: child)
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      const SizedBox(height: 4),
+                      Expanded(child: child),
+                    ],
+                  ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _UnitCard extends StatelessWidget {
+  const _UnitCard({
+    required this.unit,
+    required this.selectedUnitId,
+    required this.onPieceTap,
+    required this.onUnitTap,
+  });
+
+  final UnitState unit;
+  final String? selectedUnitId;
+  final void Function(int pieceIndex)? onPieceTap;
+  final VoidCallback? onUnitTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onUnitTap,
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Wrap(
+                spacing: 8,
+                children: <Widget>[
+                  Text(unit.unitId),
+                  if (unit.attackedThisTurn)
+                    const Chip(label: Text('Attacked')),
+                  if (selectedUnitId == unit.unitId)
+                    const Chip(label: Text('Selected')),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: List<Widget>.generate(unit.pieces.length, (int i) {
+                  return OutlinedButton(
+                    onPressed: onPieceTap == null ? null : () => onPieceTap!(i),
+                    child: Text(
+                      '${i == unit.attackingPieceIndex ? 'ATK>' : ''} '
+                      '${i == unit.defendingPieceIndex ? 'DEF>' : ''}'
+                      '${pieceLabel(unit.pieces[i].definition)}',
+                    ),
+                  );
+                }),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _BandFlex {
+  const _BandFlex({
+    required this.opponentHand,
+    required this.opponentShaman,
+    required this.opponentTable,
+    required this.playerTable,
+    required this.playerShaman,
+    required this.playerHand,
+  });
+
+  final int opponentHand;
+  final int opponentShaman;
+  final int opponentTable;
+  final int playerTable;
+  final int playerShaman;
+  final int playerHand;
+
+  factory _BandFlex.forHeight(double height) {
+    if (height < 760) {
+      return const _BandFlex(
+        opponentHand: 8,
+        opponentShaman: 10,
+        opponentTable: 19,
+        playerTable: 19,
+        playerShaman: 11,
+        playerHand: 25,
+      );
+    }
+    return const _BandFlex(
+      opponentHand: 9,
+      opponentShaman: 11,
+      opponentTable: 19,
+      playerTable: 19,
+      playerShaman: 11,
+      playerHand: 24,
     );
   }
 }
