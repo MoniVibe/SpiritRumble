@@ -51,7 +51,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   _AttackVisual? _attackVisual;
   Offset _snapFrom = Offset.zero;
   String? _hoverAttackTargetUnitId;
-  bool _hoverDirectAttack = false;
   bool _logExpanded = false;
   bool _aiRunning = false;
   bool _aiQueued = false;
@@ -135,7 +134,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
       _attackController.value = 0;
       _attackVisual = null;
       _hoverAttackTargetUnitId = null;
-      _hoverDirectAttack = false;
       _aiRunning = false;
       _aiQueued = false;
       _controller.resetMatch();
@@ -222,13 +220,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
           child: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
               final flex = _BandFlex.forHeight(constraints.maxHeight);
-              final selectedAttackerUnitId = view.selectedAttackerUnitId;
-              final canDirectAttack =
-                  selectedAttackerUnitId != null &&
-                  view.isAttackPhase &&
-                  _controller
-                      .canApply(BattleIntents.attack(selectedAttackerUnitId))
-                      .allowed;
               return Padding(
                 padding: const EdgeInsets.all(8),
                 child: Stack(
@@ -247,19 +238,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                             isActive: state.activePlayerIndex == 1,
                             title: 'Opponent Shaman',
                             bandKey: _opponentShamanKey,
-                            incomingPreview: canDirectAttack,
-                            incomingHover: _hoverDirectAttack,
-                            onDirectAttackHoverChanged: (hovered) {
-                              if (!mounted) {
-                                return;
-                              }
-                              setState(() {
-                                _hoverDirectAttack = hovered;
-                              });
-                            },
-                            onTapDirectAttack: canDirectAttack
-                                ? () => _queueAttack(selectedAttackerUnitId)
-                                : null,
                           ),
                         ),
                         Flexible(
@@ -283,7 +261,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                     _buildHudOverlay(state, winner),
                     _buildTargetingLineOverlay(),
                     _buildAttackAnimationOverlay(),
-                    if (view.isDraftPhase) _buildDraftTrayOverlay(view),
                     _buildEventLogOverlay(view),
                     if (view.lastError != null)
                       Positioned(
@@ -492,19 +469,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          if (view.isMainPhase)
-            Card(
-              key: _newUnitDropKey,
-              color: _hoverTarget?.kind == DropTargetKind.newUnit
-                  ? Theme.of(
-                      context,
-                    ).colorScheme.primary.withValues(alpha: 0.28)
-                  : null,
-              child: const ListTile(
-                dense: true,
-                title: Text('Drop Here For New Unit'),
-              ),
-            ),
           if (active.units.isEmpty)
             const Expanded(child: Center(child: Text('No units on field.')))
           else
@@ -532,10 +496,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                       selectedUnitId: view.selectedAttackerUnitId,
                       outgoingReady:
                           view.isAttackPhase &&
-                          _canUnitAttackThisTurn(
-                            unit,
-                            view.gameState.turnNumber,
-                          ),
+                          _canUnitAttackThisTurn(unit),
                       onPieceTap: (int pieceIndex) {
                         if (view.isChooseDefendersPhase) {
                           _dispatch(
@@ -573,6 +534,53 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
 
   Widget _buildPlayerShamanBand(BattleViewState view) {
     final player = view.activePlayer;
+    final actionWidgets = <Widget>[];
+    if (view.isAttackPhase) {
+      actionWidgets.add(
+        FilledButton(
+          onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
+              ? () => _dispatch(BattleIntents.endTurn())
+              : null,
+          child: const Text('Finish Attacks'),
+        ),
+      );
+    }
+    if (view.isMainPhase) {
+      actionWidgets.addAll(<Widget>[
+        Chip(
+          label: Text(
+            'Bind ${_bindsUsedThisTurn(view)}/${_bindCapForTurn(view.gameState)}',
+          ),
+        ),
+        FilledButton.tonal(
+          onPressed: _controller.canApply(BattleIntents.summonTotem()).allowed
+              ? () => _dispatch(BattleIntents.summonTotem())
+              : null,
+          child: const Text('Summon Totem'),
+        ),
+        FilledButton(
+          onPressed: () => _dispatch(BattleIntents.endTurn()),
+          child: const Text('End Action Phase'),
+        ),
+      ]);
+    }
+    if (view.isChooseDefendersPhase) {
+      actionWidgets.add(
+        FilledButton(
+          onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
+              ? () => _dispatch(BattleIntents.endTurn())
+              : null,
+          child: const Text('Validate Active Spirits'),
+        ),
+      );
+    }
+    actionWidgets.add(
+      FilledButton.tonal(
+        onPressed: _resetMatch,
+        child: const Text('New Match'),
+      ),
+    );
+
     return Container(
       key: _playerShamanKey,
       child: _BandFrame(
@@ -593,7 +601,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                   Text('Totems ${player.units.length + player.totemsInHand}'),
                   Text('Field ${player.units.length}'),
                   Text('In Hand ${player.totemsInHand}'),
-                  Text('Hand ${player.hand.length}'),
                   Text(
                     'Spirits ${player.units.fold<int>(0, (s, u) => s + u.pieces.length)}',
                   ),
@@ -602,49 +609,19 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            if (view.isAttackPhase)
-              FilledButton(
-                onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
-                    ? () => _dispatch(BattleIntents.endTurn())
-                    : null,
-                child: const Text('Finish Attacks'),
-              ),
-            if (view.isMainPhase)
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  FilledButton.tonal(
-                    onPressed:
-                        _controller
-                            .canApply(BattleIntents.summonTotem())
-                            .allowed
-                        ? () => _dispatch(BattleIntents.summonTotem())
-                        : null,
-                    child: const Text('Summon Totem'),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Wrap(
+                    spacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: actionWidgets,
                   ),
-                  FilledButton(
-                    onPressed: () => _dispatch(BattleIntents.endTurn()),
-                    child: const Text('End Turn'),
-                  ),
-                ],
+                ),
               ),
-            if (view.isChooseDefendersPhase)
-              FilledButton(
-                onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
-                    ? () => _dispatch(BattleIntents.endTurn())
-                    : null,
-                child: const Text('Validate Defenders'),
-              ),
-            if (view.isDraftPhase)
-              FilledButton.tonal(
-                onPressed: null,
-                child: const Text('Drafting...'),
-              ),
-            const SizedBox(width: 8),
-            FilledButton.tonal(
-              onPressed: _resetMatch,
-              child: const Text('New Match'),
             ),
           ],
         ),
@@ -653,134 +630,25 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   }
 
   Widget _buildPlayerHandBand(BattleViewState view) {
-    return RepaintBoundary(
-      key: _playerHandDropKey,
-      child: DragTarget<PieceInstance>(
-        onWillAcceptWithDetails: (details) {
-          if (!view.isDraftPhase) {
-            return false;
-          }
-          return _controller
-              .canApply(BattleIntents.draftFromPool(details.data.instanceId))
-              .allowed;
-        },
-        onAcceptWithDetails: (details) {
-          _dispatch(BattleIntents.draftFromPool(details.data.instanceId));
-        },
-        builder: (context, candidateData, rejectedData) {
-          final draftHover = candidateData.isNotEmpty && view.isDraftPhase;
-          return _BandFrame(
-            title: 'Player Hand',
-            borderColor: draftHover
-                ? Theme.of(context).colorScheme.primary
-                : (view.isDraftPhase ? Colors.white24 : null),
-            child: HandZone(
-              activePlayer: view.activePlayer,
-              phase: view.gameState.phase,
-              cardWidth: _handCardWidth,
-              cardHeight: _handCardHeight,
-              dragSession: _dragSession,
-              onDragStart: _onHandDragStart,
-              onDragUpdate: _onHandDragUpdate,
-              onDragEnd: _onHandDragEnd,
-              onDragCancel: _onHandDragCancel,
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildDraftTrayOverlay(BattleViewState view) {
-    final pool = view.gameState.pool;
+    final synthetic = view.activePlayer.copyWith(hand: view.gameState.pool);
+    final remaining = _remainingPoolBinds(view);
     return Align(
-      alignment: const Alignment(0, -0.1),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 840),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: RepaintBoundary(
-            child: Card(
-              color: Theme.of(
-                context,
-              ).colorScheme.surface.withValues(alpha: 0.96),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      'Draft Tray: drag to your hand',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: pool
-                            .map((piece) {
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: LongPressDraggable<PieceInstance>(
-                                  data: piece,
-                                  delay: const Duration(milliseconds: 90),
-                                  feedback: Material(
-                                    color: Colors.transparent,
-                                    child: SizedBox(
-                                      width: 92,
-                                      height: 126,
-                                      child: SpiritCardView(
-                                        piece: piece.definition,
-                                        width: 92,
-                                        height: 126,
-                                        elevated: true,
-                                        angle: 0,
-                                      ),
-                                    ),
-                                  ),
-                                  childWhenDragging: Opacity(
-                                    opacity: 0.22,
-                                    child: SizedBox(
-                                      width: 92,
-                                      height: 126,
-                                      child: SpiritCardView(
-                                        piece: piece.definition,
-                                        width: 92,
-                                        height: 126,
-                                        elevated: false,
-                                        angle: 0,
-                                      ),
-                                    ),
-                                  ),
-                                  child: GestureDetector(
-                                    onTap: () => _dispatch(
-                                      BattleIntents.draftFromPool(
-                                        piece.instanceId,
-                                      ),
-                                    ),
-                                    child: SizedBox(
-                                      width: 92,
-                                      height: 126,
-                                      child: SpiritCardView(
-                                        piece: piece.definition,
-                                        width: 92,
-                                        height: 126,
-                                        elevated: false,
-                                        angle: 0,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            })
-                            .toList(growable: false),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+      child: RepaintBoundary(
+        key: _playerHandDropKey,
+        child: _BandFrame(
+          title:
+              'Spirit Pool (${view.gameState.pool.length}) - Bind Remaining $remaining',
+          borderColor: view.isMainPhase ? Colors.white24 : null,
+          child: HandZone(
+            activePlayer: synthetic,
+            phase: view.gameState.phase,
+            cardWidth: _handCardWidth,
+            cardHeight: _handCardHeight,
+            dragSession: _dragSession,
+            onDragStart: _onHandDragStart,
+            onDragUpdate: _onHandDragUpdate,
+            onDragEnd: _onHandDragEnd,
+            onDragCancel: _onHandDragCancel,
           ),
         ),
       ),
@@ -949,18 +817,12 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     }
 
     final target = _hoverTarget;
-    if (target == null) {
+    if (target == null || target.kind != DropTargetKind.existingUnit) {
       _startSnapBack();
       return;
     }
 
-    final command = switch (target.kind) {
-      DropTargetKind.newUnit => BattleIntents.playToNewUnit(session.pieceId),
-      DropTargetKind.existingUnit => BattleIntents.addToUnit(
-        session.pieceId,
-        target.unitId!,
-      ),
-    };
+    final command = BattleIntents.bindFromPool(session.pieceId, target.unitId!);
 
     final applied = _dispatch(command);
     if (applied) {
@@ -1012,11 +874,9 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
         (unit) =>
             MapEntry<String, GlobalKey>(unit.unitId, _unitDropKey(unit.unitId)),
       ),
-      canDropToNewUnit: _controller
-          .canApply(BattleIntents.playToNewUnit(session.pieceId))
-          .allowed,
+      canDropToNewUnit: false,
       canDropToUnit: (String unitId) => _controller
-          .canApply(BattleIntents.addToUnit(session.pieceId, unitId))
+          .canApply(BattleIntents.bindFromPool(session.pieceId, unitId))
           .allowed,
     );
 
@@ -1043,7 +903,6 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
 
   void _queueAttack(String attackerUnitId, {String? targetUnitId}) {
     _hoverAttackTargetUnitId = null;
-    _hoverDirectAttack = false;
     final command = BattleIntents.attack(
       attackerUnitId,
       targetUnitId: targetUnitId,
@@ -1137,10 +996,23 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     };
   }
 
-  bool _canUnitAttackThisTurn(UnitState unit, int turnNumber) {
-    return unit.pieces.isNotEmpty &&
-        !unit.attackedThisTurn &&
-        unit.summonedTurn < turnNumber;
+  bool _canUnitAttackThisTurn(UnitState unit) {
+    return unit.pieces.isNotEmpty && !unit.attackedThisTurn;
+  }
+
+  int _bindCapForTurn(GameState state) {
+    return state.turnNumber == 1 && state.activePlayerIndex == 0 ? 1 : 2;
+  }
+
+  int _bindsUsedThisTurn(BattleViewState view) {
+    return view.activePlayer.poolPicksThisTurn;
+  }
+
+  int _remainingPoolBinds(BattleViewState view) {
+    final cap = _bindCapForTurn(view.gameState);
+    final used = _bindsUsedThisTurn(view);
+    final remaining = cap - used;
+    return remaining < 0 ? 0 : remaining;
   }
 
   Widget _buildTargetingLineOverlay() {

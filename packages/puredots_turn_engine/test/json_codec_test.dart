@@ -16,6 +16,7 @@ void main() {
     test('round-trips all command variants', () {
       final commands = <GameCommand>[
         DraftFromPoolMove(poolPieceId: 'p1'),
+        BindFromPoolMove(poolPieceId: 'p2', unitId: 'u1'),
         PlayToNewUnitMove(handPieceId: 'h1'),
         SummonTotemMove(),
         AddToExistingUnitMove(handPieceId: 'h2', unitId: 'u1'),
@@ -38,16 +39,19 @@ void main() {
         draftCatalog: canonicalPlaceholderCatalog,
         rules: rules,
       );
-      final draft = DraftFromPoolMove(poolPieceId: state.pool.first.instanceId);
-      final afterDraft = engine.applyCommand(
+      final bind = BindFromPoolMove(
+        poolPieceId: state.pool.first.instanceId,
+        unitId: state.activePlayer.units.first.unitId,
+      );
+      final afterBind = engine.applyCommand(
         state,
         state.activePlayerIndex,
-        draft,
+        bind,
         rules: rules,
       );
-      expect(afterDraft.applied, isTrue);
+      expect(afterBind.applied, isTrue, reason: afterBind.reason);
 
-      final encoded = TurnEngineJsonCodec.encodeGameState(afterDraft.state);
+      final encoded = TurnEngineJsonCodec.encodeGameState(afterBind.state);
       final decoded = TurnEngineJsonCodec.decodeGameState(encoded);
       final reEncoded = TurnEngineJsonCodec.encodeGameState(decoded);
 

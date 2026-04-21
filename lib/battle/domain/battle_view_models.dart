@@ -9,11 +9,11 @@ String phaseLabel(TurnPhase phase) {
     case TurnPhase.attackStep:
       return 'Attack';
     case TurnPhase.mainActions:
-      return 'Main';
+      return 'Action';
     case TurnPhase.resolveCombat:
       return 'Combat';
     case TurnPhase.chooseDefenders:
-      return 'Defenders';
+      return 'Active Spirits';
     case TurnPhase.endTurn:
       return 'End';
     case TurnPhase.gameOver:

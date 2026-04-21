@@ -244,6 +244,19 @@ class DraftFromPoolMove extends GameCommand {
   String summary() => 'draft pool piece $poolPieceId';
 }
 
+class BindFromPoolMove extends GameCommand {
+  BindFromPoolMove({required this.poolPieceId, required this.unitId});
+
+  final String poolPieceId;
+  final String unitId;
+
+  @override
+  String get type => 'bind_from_pool';
+
+  @override
+  String summary() => 'bind pool piece $poolPieceId to unit $unitId';
+}
+
 class PlayToNewUnitMove extends GameCommand {
   PlayToNewUnitMove({required this.handPieceId});
 

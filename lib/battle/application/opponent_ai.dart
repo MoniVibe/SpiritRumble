@@ -8,14 +8,13 @@ class OpponentAi {
     bool Function(GameCommand command) isAllowed,
   ) {
     switch (state.phase) {
-      case TurnPhase.draftFromPool:
-        return _pickDraft(state, isAllowed);
       case TurnPhase.attackStep:
         return _pickAttack(state, isAllowed);
       case TurnPhase.mainActions:
         return _pickMainAction(state, isAllowed);
       case TurnPhase.chooseDefenders:
         return _pickDefender(state, isAllowed);
+      case TurnPhase.draftFromPool:
       case TurnPhase.startTurn:
       case TurnPhase.resolveCombat:
       case TurnPhase.endTurn:
@@ -24,32 +23,12 @@ class OpponentAi {
     }
   }
 
-  static GameCommand? _pickDraft(
-    GameState state,
-    bool Function(GameCommand command) isAllowed,
-  ) {
-    final sorted = List<PieceInstance>.from(state.pool)
-      ..sort(
-        (a, b) => (b.definition.attack + b.definition.defense).compareTo(
-          a.definition.attack + a.definition.defense,
-        ),
-      );
-    for (final piece in sorted) {
-      final command = DraftFromPoolMove(poolPieceId: piece.instanceId);
-      if (isAllowed(command)) {
-        return command;
-      }
-    }
-    return null;
-  }
-
   static GameCommand? _pickAttack(
     GameState state,
     bool Function(GameCommand command) isAllowed,
   ) {
     final active = state.activePlayer;
     final enemy = state.opposingPlayer;
-    final targetable = enemy.units.where(_hasValidDefendingSpirit).toList();
 
     for (final unit in active.units) {
       if (unit.pieces.isEmpty || unit.attackedThisTurn) {
@@ -66,7 +45,7 @@ class OpponentAi {
         return chooseAttacker;
       }
 
-      for (final target in targetable) {
+      for (final target in enemy.units) {
         final attack = AttackUnitMove(
           attackerUnitId: unit.unitId,
           targetUnitId: target.unitId,
@@ -89,32 +68,26 @@ class OpponentAi {
     bool Function(GameCommand command) isAllowed,
   ) {
     final active = state.activePlayer;
+    final bindCap = _bindCapForTurn(state);
 
-    if (active.totemsInHand > 0) {
-      final summon = SummonTotemMove();
-      if (isAllowed(summon) && active.units.length < 4) {
-        return summon;
+    if (active.poolPicksThisTurn < bindCap &&
+        state.pool.isNotEmpty &&
+        active.units.isNotEmpty) {
+      final bestPoolSpirit = _bestPoolSpirit(state.pool);
+      final targetUnit = _bestBindingTarget(active.units);
+      final bind = BindFromPoolMove(
+        poolPieceId: bestPoolSpirit.instanceId,
+        unitId: targetUnit.unitId,
+      );
+      if (isAllowed(bind)) {
+        return bind;
       }
     }
 
-    if (active.hand.isNotEmpty) {
-      final bestHandPiece = _bestHandPiece(active.hand);
-
-      final playNew = PlayToNewUnitMove(handPieceId: bestHandPiece.instanceId);
-      if (isAllowed(playNew)) {
-        return playNew;
-      }
-
-      final sortedUnits = List<UnitState>.from(active.units)
-        ..sort((a, b) => a.pieces.length.compareTo(b.pieces.length));
-      for (final unit in sortedUnits) {
-        final add = AddToExistingUnitMove(
-          handPieceId: bestHandPiece.instanceId,
-          unitId: unit.unitId,
-        );
-        if (isAllowed(add)) {
-          return add;
-        }
+    if (active.totemsInHand > 0 && active.units.length < 6) {
+      final summon = SummonTotemMove();
+      if (isAllowed(summon)) {
+        return summon;
       }
     }
 
@@ -157,6 +130,26 @@ class OpponentAi {
     return null;
   }
 
+  static int _bindCapForTurn(GameState state) {
+    return state.turnNumber == 1 && state.activePlayerIndex == 0 ? 1 : 2;
+  }
+
+  static UnitState _bestBindingTarget(List<UnitState> units) {
+    final sorted = List<UnitState>.from(units)
+      ..sort((a, b) => a.pieces.length.compareTo(b.pieces.length));
+    return sorted.first;
+  }
+
+  static PieceInstance _bestPoolSpirit(List<PieceInstance> pool) {
+    final sorted = List<PieceInstance>.from(pool)
+      ..sort(
+        (a, b) => (b.definition.attack + b.definition.defense).compareTo(
+          a.definition.attack + a.definition.defense,
+        ),
+      );
+    return sorted.first;
+  }
+
   static int _bestAttackIndex(UnitState unit) {
     var bestIndex = 0;
     var bestAttack = unit.pieces.first.definition.attack;
@@ -182,19 +175,5 @@ class OpponentAi {
     }
     return bestIndex;
   }
-
-  static bool _hasValidDefendingSpirit(UnitState unit) {
-    final idx = unit.defendingPieceIndex;
-    return idx != null && idx >= 0 && idx < unit.pieces.length;
-  }
-
-  static PieceInstance _bestHandPiece(List<PieceInstance> hand) {
-    final sorted = List<PieceInstance>.from(hand)
-      ..sort(
-        (a, b) => (b.definition.attack + b.definition.defense).compareTo(
-          a.definition.attack + a.definition.defense,
-        ),
-      );
-    return sorted.first;
-  }
 }
+

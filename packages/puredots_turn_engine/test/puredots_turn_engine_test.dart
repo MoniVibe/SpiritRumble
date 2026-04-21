@@ -42,8 +42,8 @@ void main() {
     ),
   ];
 
-  group('TurnEngine rule v1', () {
-    test('players start with one totem on field and three in hand', () {
+  group('TurnEngine rule v1.1', () {
+    test('players start with 1 board totem, 3 in hand, and pool of 5', () {
       final state = engine.newMatch(draftCatalog: catalog, rules: rules);
 
       expect(state.players[0].units.length, 1);
@@ -51,96 +51,97 @@ void main() {
       expect(state.players[0].totemsInHand, 3);
       expect(state.players[1].totemsInHand, 3);
       expect(state.pool.length, 5);
-      expect(state.phase, TurnPhase.draftFromPool);
+      expect(state.phase, TurnPhase.mainActions); // auto-skip attack if empty
     });
 
-    test('turn 1 drafts 1 spirit then auto-enters main actions when no attacks', () {
+    test('first turn allows binding only 1 spirit from pool', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
+      final unitId = state.activePlayer.units.first.unitId;
 
       state = _apply(
         engine,
         state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        BindFromPoolMove(poolPieceId: state.pool.first.instanceId, unitId: unitId),
         rules: rules,
       );
+      expect(state.activePlayer.units.first.pieces.length, 1);
 
-      expect(state.activePlayer.hand.length, 1);
-      expect(state.phase, TurnPhase.mainActions);
+      final denied = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        BindFromPoolMove(poolPieceId: state.pool.first.instanceId, unitId: unitId),
+        rules: rules,
+      );
+      expect(denied.applied, isFalse);
+      expect(denied.reason, contains('bind limit'));
     });
 
-    test('later turns draft 2 spirits', () {
+    test('later turns allow binding 2 spirits from pool', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: rules,
-      );
-      state = _apply(
-        engine,
-        state,
-        EndTurnMove(),
-        rules: rules,
-      ); // main->def
+
+      // Player 1: optional actions -> choose active spirit if needed -> handoff
+      state = _apply(engine, state, EndTurnMove(), rules: rules); // main->def
       state = _apply(engine, state, EndTurnMove(), rules: rules); // def->handoff
-
       expect(state.activePlayerIndex, 1);
-      expect(state.phase, TurnPhase.draftFromPool);
-
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: rules,
-      );
-      expect(state.phase, TurnPhase.draftFromPool);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: rules,
-      );
-
       expect(state.phase, TurnPhase.mainActions);
-      expect(state.activePlayer.hand.length, 2);
-    });
-
-    test('can summon totem and bind spirit during main actions', () {
-      const localRules = MatchRules(
-        poolSize: 5,
-        firstPlayerOpeningDraft: 1,
-        standardDraft: 1,
-        startingTotemsOnField: 1,
-        startingTotemsInHand: 3,
-        poolSeed: 77,
-      );
-
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-
-      state = _apply(engine, state, SummonTotemMove(), rules: localRules);
-      expect(state.activePlayer.units.length, 2);
-      expect(state.activePlayer.totemsInHand, 2);
 
       final unitId = state.activePlayer.units.first.unitId;
-      final spiritId = state.activePlayer.hand.first.instanceId;
       state = _apply(
         engine,
         state,
-        AddToExistingUnitMove(handPieceId: spiritId, unitId: unitId),
-        rules: localRules,
+        BindFromPoolMove(poolPieceId: state.pool.first.instanceId, unitId: unitId),
+        rules: rules,
+      );
+      state = _apply(
+        engine,
+        state,
+        BindFromPoolMove(poolPieceId: state.pool.first.instanceId, unitId: unitId),
+        rules: rules,
       );
 
-      expect(state.activePlayer.hand, isEmpty);
-      expect(state.activePlayer.units.first.pieces.length, 1);
+      final deniedThird = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        BindFromPoolMove(poolPieceId: state.pool.first.instanceId, unitId: unitId),
+        rules: rules,
+      );
+      expect(deniedThird.applied, isFalse);
+      expect(deniedThird.reason, contains('bind limit'));
     });
 
-    test('attack step cannot be ended while mandatory attacks remain', () {
+    test('cannot end active-spirit phase until assigned on spirit-bearing totems', () {
+      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
+      final unitId = state.activePlayer.units.first.unitId;
+
+      state = _apply(
+        engine,
+        state,
+        BindFromPoolMove(poolPieceId: state.pool.first.instanceId, unitId: unitId),
+        rules: rules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: rules); // main->def
+      expect(state.phase, TurnPhase.chooseDefenders);
+
+      final denied = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        EndTurnMove(),
+        rules: rules,
+      );
+      expect(denied.applied, isFalse);
+      expect(denied.reason, contains('active spirits'));
+
+      state = _apply(
+        engine,
+        state,
+        ChooseDefenderMove(unitId: unitId, pieceIndex: 0),
+        rules: rules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: rules);
+      expect(state.activePlayerIndex, 1);
+    });
+
+    test('attack phase requires each spirit-bearing totem to attack once', () {
       final state = _stateWithAttackScenario(
         catalog: catalog,
         attacker: catalog[0],
@@ -148,17 +149,17 @@ void main() {
         defenderSelected: true,
       );
 
-      final endResult = engine.applyCommand(
+      final denied = engine.applyCommand(
         state,
         state.activePlayerIndex,
         EndTurnMove(),
+        rules: rules,
       );
-
-      expect(endResult.applied, isFalse);
-      expect(endResult.reason, contains('must attack'));
+      expect(denied.applied, isFalse);
+      expect(denied.reason, contains('must attack'));
     });
 
-    test('only totems with selected defenders can be targeted', () {
+    test('totem with no active spirit is destroyed when attacked', () {
       final state = _stateWithAttackScenario(
         catalog: catalog,
         attacker: catalog[0],
@@ -166,41 +167,23 @@ void main() {
         defenderSelected: false,
       );
 
-      final attackResult = engine.applyCommand(
+      final next = _apply(
+        engine,
         state,
-        state.activePlayerIndex,
         AttackUnitMove(
           attackerUnitId: state.activePlayer.units.first.unitId,
           targetUnitId: state.opposingPlayer.units.first.unitId,
         ),
+        rules: rules,
       );
 
-      expect(attackResult.applied, isFalse);
-      expect(attackResult.reason, contains('no defending spirit selected'));
+      expect(next.phase, TurnPhase.gameOver);
+      expect(next.winnerIndex, 0);
     });
 
-    test('direct attacks are not allowed in rule v1', () {
-      final state = _stateWithAttackScenario(
-        catalog: catalog,
-        attacker: catalog[0],
-        defender: catalog[1],
-        defenderSelected: true,
-      );
-
-      final direct = engine.applyCommand(
-        state,
-        state.activePlayerIndex,
-        AttackUnitMove(attackerUnitId: state.activePlayer.units.first.unitId),
-      );
-
-      expect(direct.applied, isFalse);
-      expect(direct.reason, contains('target an enemy totem'));
-    });
-
-    test('combat destroys totem only when defender has no protection', () {
+    test('color or mode protection prevents destruction', () {
       final attacker = catalog[0]; // red physical
-      final unprotected =
-          catalog[1]; // green magical (no color/mode protection)
+      final unprotected = catalog[1]; // green magical
       final protectedByColor = catalog[2]; // blue protects vs red
       final protectedByMode = const PieceDefinition(
         id: 'mode_guard',
@@ -212,10 +195,7 @@ void main() {
         defense: 1,
       );
 
-      final kill = engine.resolveAttack(
-        attacker: attacker,
-        defender: unprotected,
-      );
+      final kill = engine.resolveAttack(attacker: attacker, defender: unprotected);
       final colorSave = engine.resolveAttack(
         attacker: attacker,
         defender: protectedByColor,
@@ -230,14 +210,14 @@ void main() {
       expect(modeSave.destroyed, isFalse);
     });
 
-    test('player loses when all totems are gone (field + hand)', () {
+    test('player loses immediately when board has no totems', () {
       final state = _stateWithAttackScenario(
         catalog: catalog,
         attacker: catalog[0],
         defender: catalog[1],
-        defenderSelected: true,
-        attackerTotemsInHand: 0,
-        defenderTotemsInHand: 0,
+        defenderSelected: false,
+        attackerTotemsInHand: 3,
+        defenderTotemsInHand: 3,
       );
 
       final next = _apply(
@@ -247,8 +227,8 @@ void main() {
           attackerUnitId: state.activePlayer.units.first.unitId,
           targetUnitId: state.opposingPlayer.units.first.unitId,
         ),
+        rules: rules,
       );
-
       expect(next.phase, TurnPhase.gameOver);
       expect(next.winnerIndex, 0);
     });
@@ -299,11 +279,13 @@ GameState _stateWithAttackScenario({
     totemsInHand: attackerTotemsInHand,
     hand: const <PieceInstance>[],
     units: <UnitState>[attackerUnit],
+    poolPicksThisTurn: 0,
   );
   final p2 = state.players[1].copyWith(
     totemsInHand: defenderTotemsInHand,
     hand: const <PieceInstance>[],
     units: <UnitState>[defenderUnit],
+    poolPicksThisTurn: 0,
   );
 
   state = state.copyWith(
@@ -333,3 +315,4 @@ GameState _apply(
   expect(result.applied, isTrue, reason: result.reason);
   return result.state;
 }
+

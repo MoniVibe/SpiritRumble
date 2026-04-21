@@ -43,15 +43,16 @@ void main() {
       expect(joined0.revision, 0);
       expect(joined1.revision, 0);
 
-      final draft = DraftFromPoolMove(
+      final bind = BindFromPoolMove(
         poolPieceId: joined0.state.pool.first.instanceId,
+        unitId: joined0.state.players[0].units.first.unitId,
       );
       final accepted = await backend.submitCommand(
         CommandEnvelope(
           matchId: p0.matchId,
           actorIndex: 0,
           clientRevision: 0,
-          command: draft,
+          command: bind,
         ),
       );
       expect(accepted.deniedReason, isNull);

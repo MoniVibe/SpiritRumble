@@ -30,6 +30,10 @@ class TurnEngineJsonCodec {
   static Map<String, Object?> encodeGameCommand(GameCommand command) {
     final payload = switch (command) {
       DraftFromPoolMove c => <String, Object?>{'poolPieceId': c.poolPieceId},
+      BindFromPoolMove c => <String, Object?>{
+        'poolPieceId': c.poolPieceId,
+        'unitId': c.unitId,
+      },
       PlayToNewUnitMove c => <String, Object?>{'handPieceId': c.handPieceId},
       SummonTotemMove _ => const <String, Object?>{},
       AddToExistingUnitMove c => <String, Object?>{
@@ -62,6 +66,10 @@ class TurnEngineJsonCodec {
     return switch (type) {
       'draft_from_pool' => DraftFromPoolMove(
         poolPieceId: _requiredString(payload, 'poolPieceId'),
+      ),
+      'bind_from_pool' => BindFromPoolMove(
+        poolPieceId: _requiredString(payload, 'poolPieceId'),
+        unitId: _requiredString(payload, 'unitId'),
       ),
       'play_to_new_unit' => PlayToNewUnitMove(
         handPieceId: _requiredString(payload, 'handPieceId'),

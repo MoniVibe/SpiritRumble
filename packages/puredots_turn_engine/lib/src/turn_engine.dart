@@ -36,7 +36,6 @@ class TurnEngine {
     }
 
     var nextUnitId = 1;
-
     List<UnitState> startingTotemsFor(int ownerIndex) {
       final units = <UnitState>[];
       for (var i = 0; i < rules.startingTotemsOnField; i++) {
@@ -111,14 +110,22 @@ class TurnEngine {
     }
 
     switch (command) {
+      case BindFromPoolMove _:
+        return _canApplyBindFromPool(state, command, rules: rules);
       case DraftFromPoolMove _:
-        return _canApplyDraftFromPool(state, command, rules: rules);
+        return const CommandCheck.denied(
+          'draft phase was removed; use bind_from_pool in action phase',
+        );
       case SummonTotemMove _:
         return _canApplySummonTotem(state);
       case PlayToNewUnitMove _:
-        return _canApplyPlayToNewUnit(state, command);
+        return const CommandCheck.denied(
+          'play_to_new_unit is not used in the current rule set',
+        );
       case AddToExistingUnitMove _:
-        return _canApplyAddToExistingUnit(state, command);
+        return const CommandCheck.denied(
+          'add_to_existing_unit is not used in the current rule set',
+        );
       case ChooseAttackerMove _:
         return _canApplyChooseAttacker(state, command);
       case AttackUnitMove _:
@@ -149,14 +156,28 @@ class TurnEngine {
 
     var next = state;
     switch (command) {
+      case BindFromPoolMove _:
+        next = _applyBindFromPool(next, command);
       case DraftFromPoolMove _:
-        next = _applyDraftFromPool(next, command, rules: rules);
+        return ApplyCommandResult(
+          state: state,
+          applied: false,
+          reason: 'draft phase was removed; use bind_from_pool',
+        );
       case SummonTotemMove _:
         next = _applySummonTotem(next);
       case PlayToNewUnitMove _:
-        next = _applyPlayToNewUnit(next, command);
+        return ApplyCommandResult(
+          state: state,
+          applied: false,
+          reason: 'play_to_new_unit is not used in the current rule set',
+        );
       case AddToExistingUnitMove _:
-        next = _applyAddToExistingUnit(next, command);
+        return ApplyCommandResult(
+          state: state,
+          applied: false,
+          reason: 'add_to_existing_unit is not used in the current rule set',
+        );
       case ChooseAttackerMove _:
         next = _applyChooseAttacker(next, command);
       case AttackUnitMove _:
@@ -204,22 +225,23 @@ class TurnEngine {
     );
   }
 
-  CommandCheck _canApplyDraftFromPool(
+  CommandCheck _canApplyBindFromPool(
     GameState state,
-    DraftFromPoolMove command, {
+    BindFromPoolMove command, {
     required MatchRules rules,
   }) {
-    if (state.phase != TurnPhase.draftFromPool) {
-      return const CommandCheck.denied('not in draft phase');
+    if (state.phase != TurnPhase.mainActions) {
+      return const CommandCheck.denied('not in main actions phase');
     }
     if (_findPoolIndex(state, command.poolPieceId) == -1) {
       return const CommandCheck.denied('requested spirit is not in pool');
     }
-    final requiredPicks = _requiredDraftPicks(state, rules: rules);
-    if (state.activePlayer.poolPicksThisTurn >= requiredPicks) {
-      return const CommandCheck.denied(
-        'draft picks for this turn are complete',
-      );
+    if (_findUnitIndex(state.activePlayer, command.unitId) == -1) {
+      return const CommandCheck.denied('target totem does not exist');
+    }
+    final cap = _requiredPoolBindsThisTurn(state, rules: rules);
+    if (state.activePlayer.poolPicksThisTurn >= cap) {
+      return const CommandCheck.denied('spirit bind limit reached for this turn');
     }
     return const CommandCheck.allowed();
   }
@@ -230,39 +252,6 @@ class TurnEngine {
     }
     if (state.activePlayer.totemsInHand <= 0) {
       return const CommandCheck.denied('no totems left in hand');
-    }
-    return const CommandCheck.allowed();
-  }
-
-  CommandCheck _canApplyPlayToNewUnit(
-    GameState state,
-    PlayToNewUnitMove command,
-  ) {
-    if (state.phase != TurnPhase.mainActions) {
-      return const CommandCheck.denied('not in main actions phase');
-    }
-    if (_findHandIndex(state.activePlayer, command.handPieceId) == -1) {
-      return const CommandCheck.denied('spirit is not in hand');
-    }
-    if (state.activePlayer.totemsInHand <= 0) {
-      return const CommandCheck.denied('no totems left in hand');
-    }
-    return const CommandCheck.allowed();
-  }
-
-  CommandCheck _canApplyAddToExistingUnit(
-    GameState state,
-    AddToExistingUnitMove command,
-  ) {
-    if (state.phase != TurnPhase.mainActions) {
-      return const CommandCheck.denied('not in main actions phase');
-    }
-    if (_findHandIndex(state.activePlayer, command.handPieceId) == -1) {
-      return const CommandCheck.denied('spirit is not in hand');
-    }
-    final unitIndex = _findUnitIndex(state.activePlayer, command.unitId);
-    if (unitIndex == -1) {
-      return const CommandCheck.denied('target totem does not exist');
     }
     return const CommandCheck.allowed();
   }
@@ -299,10 +288,9 @@ class TurnEngine {
     }
 
     final attackerUnit = state.activePlayer.units[attackerUnitIndex];
-    if (!_canUnitAttackThisStep(attackerUnit, turnNumber: state.turnNumber)) {
+    if (!_canUnitAttackThisStep(attackerUnit)) {
       return const CommandCheck.denied('selected totem cannot attack now');
     }
-
     if (attackerUnit.attackingPieceIndex == null) {
       return const CommandCheck.denied('attacking spirit has not been chosen');
     }
@@ -310,7 +298,6 @@ class TurnEngine {
     if (command.targetUnitId == null) {
       return const CommandCheck.denied('attacks must target an enemy totem');
     }
-
     final targetIndex = _findUnitIndex(
       state.opposingPlayer,
       command.targetUnitId!,
@@ -318,14 +305,6 @@ class TurnEngine {
     if (targetIndex == -1) {
       return const CommandCheck.denied('target totem not found');
     }
-
-    final targetUnit = state.opposingPlayer.units[targetIndex];
-    if (!_hasValidDefendingPiece(targetUnit)) {
-      return const CommandCheck.denied(
-        'target totem has no defending spirit selected',
-      );
-    }
-
     return const CommandCheck.allowed();
   }
 
@@ -342,9 +321,7 @@ class TurnEngine {
     }
     final unit = state.activePlayer.units[unitIndex];
     if (unit.pieces.isEmpty) {
-      return const CommandCheck.denied(
-        'cannot choose defender for empty totem',
-      );
+      return const CommandCheck.denied('cannot choose active spirit for empty totem');
     }
     if (command.pieceIndex < 0 || command.pieceIndex >= unit.pieces.length) {
       return const CommandCheck.denied('defender index out of range');
@@ -356,7 +333,7 @@ class TurnEngine {
     if (state.phase == TurnPhase.attackStep) {
       if (_hasPendingMandatoryAttacks(state)) {
         return const CommandCheck.denied(
-          'all attack-ready totems must attack before ending attack step',
+          'all attack-ready totems must attack before ending attack phase',
         );
       }
       return const CommandCheck.allowed();
@@ -365,56 +342,49 @@ class TurnEngine {
       return const CommandCheck.allowed();
     }
     if (state.phase == TurnPhase.chooseDefenders) {
+      if (!_allActiveSpiritsAssignedForSpiritTotems(state.activePlayer)) {
+        return const CommandCheck.denied(
+          'choose active spirits for all totems with bound spirits',
+        );
+      }
       return const CommandCheck.allowed();
     }
     return const CommandCheck.denied(
-      'end turn is only valid in attack, main, or defender phases',
+      'end turn is only valid in attack, action, or active-spirit phase',
     );
   }
 
-  GameState _applyDraftFromPool(
-    GameState state,
-    DraftFromPoolMove command, {
-    required MatchRules rules,
-  }) {
+  GameState _applyBindFromPool(GameState state, BindFromPoolMove command) {
     final pool = List<PieceInstance>.from(state.pool);
-    final poolIndex = pool.indexWhere(
-      (piece) => piece.instanceId == command.poolPieceId,
-    );
-    final drafted = pool
+    final poolIndex = _findPoolIndex(state, command.poolPieceId);
+    final spirit = pool
         .removeAt(poolIndex)
         .copyWith(ownerIndex: state.activePlayerIndex);
 
     final active = state.activePlayer;
-    final hand = List<PieceInstance>.from(active.hand)..add(drafted);
+    final unitIndex = _findUnitIndex(active, command.unitId);
+    final units = List<UnitState>.from(active.units);
+    final unit = units[unitIndex];
+    final pieces = List<PieceInstance>.from(unit.pieces)..add(spirit);
+
+    units[unitIndex] = unit.copyWith(
+      pieces: pieces,
+      attackingPieceIndex: unit.attackingPieceIndex ?? 0,
+    );
+
     var next = _replacePlayer(
       state.copyWith(pool: pool),
       state.activePlayerIndex,
       active.copyWith(
-        hand: hand,
+        units: units,
         poolPicksThisTurn: active.poolPicksThisTurn + 1,
       ),
     );
 
-    next = _appendEvent(
+    return _appendEvent(
       next,
-      '${active.id} drafted ${drafted.definition.name} from pool.',
+      '${active.id} bound ${spirit.definition.name} from pool to ${unit.unitId}.',
     );
-
-    final requiredPicks = _requiredDraftPicks(next, rules: rules);
-    if (next.activePlayer.poolPicksThisTurn >= requiredPicks) {
-      next = next.copyWith(phase: TurnPhase.attackStep);
-      if (_hasPendingMandatoryAttacks(next)) {
-        next = _appendEvent(next, '${active.id} entered attack step.');
-      } else {
-        next = next.copyWith(phase: TurnPhase.mainActions);
-        next = _appendEvent(
-          next,
-          '${active.id} has no available attacks and entered main actions.',
-        );
-      }
-    }
-    return next;
   }
 
   GameState _applySummonTotem(GameState state) {
@@ -444,82 +414,6 @@ class TurnEngine {
     );
 
     return _appendEvent(next, '${active.id} summoned a totem to the field.');
-  }
-
-  GameState _applyPlayToNewUnit(GameState state, PlayToNewUnitMove command) {
-    final active = state.activePlayer;
-    final hand = List<PieceInstance>.from(active.hand);
-    final handIndex = hand.indexWhere(
-      (piece) => piece.instanceId == command.handPieceId,
-    );
-    final piece = hand
-        .removeAt(handIndex)
-        .copyWith(ownerIndex: state.activePlayerIndex);
-
-    final units = List<UnitState>.from(active.units)
-      ..add(
-        UnitState(
-          unitId: 'u${state.nextUnitId}',
-          ownerIndex: state.activePlayerIndex,
-          pieces: <PieceInstance>[piece],
-          summonedTurn: state.turnNumber,
-          attackingPieceIndex: 0,
-          defendingPieceIndex: null,
-          attackedThisTurn: false,
-        ),
-      );
-
-    var next = state.copyWith(nextUnitId: state.nextUnitId + 1);
-    next = _replacePlayer(
-      next,
-      state.activePlayerIndex,
-      active.copyWith(
-        hand: hand,
-        units: units,
-        totemsInHand: active.totemsInHand - 1,
-        hadUnitsEver: true,
-      ),
-    );
-
-    return _appendEvent(
-      next,
-      '${active.id} summoned a totem and bound ${piece.definition.name}.',
-    );
-  }
-
-  GameState _applyAddToExistingUnit(
-    GameState state,
-    AddToExistingUnitMove command,
-  ) {
-    final active = state.activePlayer;
-    final hand = List<PieceInstance>.from(active.hand);
-    final handIndex = hand.indexWhere(
-      (piece) => piece.instanceId == command.handPieceId,
-    );
-    final piece = hand
-        .removeAt(handIndex)
-        .copyWith(ownerIndex: state.activePlayerIndex);
-
-    final unitIndex = _findUnitIndex(active, command.unitId);
-    final units = List<UnitState>.from(active.units);
-    final unit = units[unitIndex];
-    final pieces = List<PieceInstance>.from(unit.pieces)..add(piece);
-
-    units[unitIndex] = unit.copyWith(
-      pieces: pieces,
-      attackingPieceIndex: unit.attackingPieceIndex ?? 0,
-    );
-
-    var next = _replacePlayer(
-      state,
-      state.activePlayerIndex,
-      active.copyWith(hand: hand, units: units),
-    );
-
-    return _appendEvent(
-      next,
-      '${active.id} bound ${piece.definition.name} to ${unit.unitId}.',
-    );
   }
 
   GameState _applyChooseAttacker(GameState state, ChooseAttackerMove command) {
@@ -571,41 +465,34 @@ class TurnEngine {
       defendingPieceIndex: command.pieceIndex,
     );
 
-    var next = _replacePlayer(
+    final next = _replacePlayer(
       state,
       state.activePlayerIndex,
       active.copyWith(units: units),
     );
-    next = _appendEvent(
+    return _appendEvent(
       next,
-      '${active.id} set defender spirit ${command.pieceIndex} for ${command.unitId}.',
+      '${active.id} set active spirit ${command.pieceIndex} for ${command.unitId}.',
     );
-    return next;
   }
 
   GameState _applyEndTurn(GameState state, {required MatchRules rules}) {
     if (state.phase == TurnPhase.attackStep) {
       var next = state.copyWith(phase: TurnPhase.mainActions);
-      next = _appendEvent(
-        next,
-        '${state.activePlayer.id} completed attack step.',
-      );
+      next = _appendEvent(next, '${state.activePlayer.id} completed attack phase.');
       return next;
     }
 
     if (state.phase == TurnPhase.mainActions) {
       var next = state.copyWith(phase: TurnPhase.chooseDefenders);
-      next = _appendEvent(
-        next,
-        '${state.activePlayer.id} entered defender selection.',
-      );
+      next = _appendEvent(next, '${state.activePlayer.id} entered active spirit assignment.');
       return next;
     }
 
     if (state.phase == TurnPhase.chooseDefenders) {
       var next = _appendEvent(
         state,
-        '${state.activePlayer.id} completed defender selection.',
+        '${state.activePlayer.id} completed active spirit assignment.',
       );
       return _handoffTurn(next, rules: rules);
     }
@@ -637,14 +524,17 @@ class TurnEngine {
   GameState _beginTurn(GameState state, {required MatchRules rules}) {
     final activeIndex = state.activePlayerIndex;
     final active = state.activePlayer;
+    final opposing = state.opposingPlayer;
+
+    if (active.units.isEmpty) {
+      final winner = state.opposingPlayerIndex;
+      var next = state.copyWith(phase: TurnPhase.gameOver, winnerIndex: winner);
+      next = _appendEvent(next, 'Winner: ${opposing.id}');
+      return next;
+    }
 
     final units = List<UnitState>.from(active.units)
-        .map(
-          (unit) => unit.copyWith(
-            attackedThisTurn: false,
-            clearAttackingPieceIndex: unit.attackingPieceIndex == null,
-          ),
-        )
+        .map((unit) => unit.copyWith(attackedThisTurn: false))
         .toList(growable: false);
 
     var next = _replacePlayer(
@@ -653,11 +543,17 @@ class TurnEngine {
       active.copyWith(poolPicksThisTurn: 0, units: units),
     );
 
-    next = next.copyWith(phase: TurnPhase.draftFromPool);
-    return _appendEvent(
-      next,
-      'Turn ${next.turnNumber}: ${next.activePlayer.id} drafts ${_requiredDraftPicks(next, rules: rules)} from pool.',
-    );
+    next = next.copyWith(phase: TurnPhase.attackStep);
+    next = _appendEvent(next, 'Turn ${next.turnNumber}: ${next.activePlayer.id} attack phase.');
+
+    if (!_hasPendingMandatoryAttacks(next)) {
+      next = next.copyWith(phase: TurnPhase.mainActions);
+      next = _appendEvent(
+        next,
+        '${next.activePlayer.id} has no available attacks and entered action phase.',
+      );
+    }
+    return next;
   }
 
   GameState _refreshPool(GameState state, {required MatchRules rules}) {
@@ -696,15 +592,11 @@ class TurnEngine {
     }
 
     final attackerPlayerIndex = pending.attackerPlayerIndex;
-    final defenderPlayerIndex =
-        (attackerPlayerIndex + 1) % state.players.length;
+    final defenderPlayerIndex = (attackerPlayerIndex + 1) % state.players.length;
     final attackerPlayer = state.players[attackerPlayerIndex];
     final defenderPlayer = state.players[defenderPlayerIndex];
 
-    final attackerUnitIndex = _findUnitIndex(
-      attackerPlayer,
-      pending.attackerUnitId,
-    );
+    final attackerUnitIndex = _findUnitIndex(attackerPlayer, pending.attackerUnitId);
     if (attackerUnitIndex == -1) {
       return _appendEvent(
         state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
@@ -726,7 +618,6 @@ class TurnEngine {
     }
 
     final attackerPiece = attackerUnit.pieces[attackerIndex];
-
     if (pending.targetUnitId == null) {
       return _appendEvent(
         state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
@@ -734,10 +625,7 @@ class TurnEngine {
       );
     }
 
-    final defenderUnitIndex = _findUnitIndex(
-      defenderPlayer,
-      pending.targetUnitId!,
-    );
+    final defenderUnitIndex = _findUnitIndex(defenderPlayer, pending.targetUnitId!);
     if (defenderUnitIndex == -1) {
       return _appendEvent(
         state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
@@ -746,22 +634,23 @@ class TurnEngine {
     }
 
     final defenderUnit = defenderPlayer.units[defenderUnitIndex];
-    if (!_hasValidDefendingPiece(defenderUnit)) {
-      return _appendEvent(
-        state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
-        'Attack fizzled: target has no defending spirit selected.',
+    var destroyed = false;
+    var reason = 'target had no active spirit';
+
+    if (_hasValidDefendingPiece(defenderUnit)) {
+      final defenderPiece = defenderUnit.pieces[defenderUnit.defendingPieceIndex!];
+      final result = resolveAttack(
+        attacker: attackerPiece.definition,
+        defender: defenderPiece.definition,
       );
+      destroyed = result.destroyed;
+      reason = result.reason;
+    } else {
+      destroyed = true;
     }
 
-    final defenderPiece =
-        defenderUnit.pieces[defenderUnit.defendingPieceIndex!];
-    final result = resolveAttack(
-      attacker: attackerPiece.definition,
-      defender: defenderPiece.definition,
-    );
-
     var next = state;
-    if (result.destroyed) {
+    if (destroyed) {
       next = _removeUnit(
         next,
         ownerIndex: defenderPlayerIndex,
@@ -769,12 +658,12 @@ class TurnEngine {
       );
       next = _appendEvent(
         next,
-        '${attackerPiece.definition.name} destroyed totem ${defenderUnit.unitId} (${result.reason}).',
+        '${attackerPiece.definition.name} destroyed totem ${defenderUnit.unitId} ($reason).',
       );
     } else {
       next = _appendEvent(
         next,
-        '${attackerPiece.definition.name} failed to break totem ${defenderUnit.unitId} (${result.reason}).',
+        '${attackerPiece.definition.name} failed to break totem ${defenderUnit.unitId} ($reason).',
       );
     }
 
@@ -794,12 +683,11 @@ class TurnEngine {
     GameState state, {
     required int attackerPlayerIndex,
   }) {
-    final defenderPlayerIndex =
-        (attackerPlayerIndex + 1) % state.players.length;
+    final defenderPlayerIndex = (attackerPlayerIndex + 1) % state.players.length;
     final defender = state.players[defenderPlayerIndex];
     final attacker = state.players[attackerPlayerIndex];
 
-    if (_totalTotems(defender) <= 0) {
+    if (!_hasBoardTotem(defender)) {
       var next = state.copyWith(
         phase: TurnPhase.gameOver,
         winnerIndex: attackerPlayerIndex,
@@ -850,27 +738,24 @@ class TurnEngine {
     if (state.phase != TurnPhase.attackStep) {
       return false;
     }
+    if (!_hasLegalAttackTarget(state)) {
+      return false;
+    }
 
     for (final unit in state.activePlayer.units) {
-      if (!_canUnitAttackThisStep(unit, turnNumber: state.turnNumber)) {
-        continue;
+      if (_canUnitAttackThisStep(unit)) {
+        return true;
       }
-      if (!_hasLegalAttackTarget(state)) {
-        continue;
-      }
-      return true;
     }
     return false;
   }
 
   bool _hasLegalAttackTarget(GameState state) {
-    return state.opposingPlayer.units.any(_hasValidDefendingPiece);
+    return state.opposingPlayer.units.isNotEmpty;
   }
 
-  bool _canUnitAttackThisStep(UnitState unit, {required int turnNumber}) {
-    return unit.pieces.isNotEmpty &&
-        unit.attackedThisTurn == false &&
-        unit.summonedTurn < turnNumber;
+  bool _canUnitAttackThisStep(UnitState unit) {
+    return unit.pieces.isNotEmpty && unit.attackedThisTurn == false;
   }
 
   bool _hasValidDefendingPiece(UnitState unit) {
@@ -878,13 +763,22 @@ class TurnEngine {
     return index != null && index >= 0 && index < unit.pieces.length;
   }
 
-  int _totalTotems(PlayerState player) {
-    return player.units.length + player.totemsInHand;
+  bool _allActiveSpiritsAssignedForSpiritTotems(PlayerState player) {
+    for (final unit in player.units) {
+      if (unit.pieces.isEmpty) {
+        continue;
+      }
+      if (!_hasValidDefendingPiece(unit)) {
+        return false;
+      }
+    }
+    return true;
   }
 
-  int _requiredDraftPicks(GameState state, {required MatchRules rules}) {
-    final active = state.activePlayer;
-    if (state.activePlayerIndex == 0 && active.turnsTaken == 0) {
+  bool _hasBoardTotem(PlayerState player) => player.units.isNotEmpty;
+
+  int _requiredPoolBindsThisTurn(GameState state, {required MatchRules rules}) {
+    if (state.turnNumber == 1 && state.activePlayerIndex == 0) {
       return rules.firstPlayerOpeningDraft;
     }
     return rules.standardDraft;
@@ -915,10 +809,6 @@ class TurnEngine {
 
   int _findPoolIndex(GameState state, String poolPieceId) {
     return state.pool.indexWhere((piece) => piece.instanceId == poolPieceId);
-  }
-
-  int _findHandIndex(PlayerState player, String handPieceId) {
-    return player.hand.indexWhere((piece) => piece.instanceId == handPieceId);
   }
 
   int _findUnitIndex(PlayerState player, String unitId) {

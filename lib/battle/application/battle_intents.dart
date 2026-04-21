@@ -6,6 +6,9 @@ class BattleIntents {
   static DraftFromPoolMove draftFromPool(String pieceId) =>
       DraftFromPoolMove(poolPieceId: pieceId);
 
+  static BindFromPoolMove bindFromPool(String pieceId, String unitId) =>
+      BindFromPoolMove(poolPieceId: pieceId, unitId: unitId);
+
   static SummonTotemMove summonTotem() => SummonTotemMove();
 
   static PlayToNewUnitMove playToNewUnit(String handPieceId) =>
