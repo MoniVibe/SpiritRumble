@@ -563,11 +563,44 @@ class TurnEngine {
 
     var rng = state.catalogCursor;
     var nextPieceId = state.nextPieceInstanceId;
-    final pool = <PieceInstance>[];
+    final poolDefinitions = <PieceDefinition>[];
+    final uniqueCatalog = List<PieceDefinition>.from(state.draftCatalog);
 
-    for (var i = 0; i < rules.poolSize; i++) {
-      rng = _nextRng(rng);
-      final definition = state.draftCatalog[rng % state.draftCatalog.length];
+    if (uniqueCatalog.length >= rules.poolSize) {
+      var attempts = 0;
+      while (attempts < 8) {
+        attempts++;
+        final shuffled = List<PieceDefinition>.from(uniqueCatalog);
+        for (var i = shuffled.length - 1; i > 0; i--) {
+          rng = _nextRng(rng);
+          final j = rng % (i + 1);
+          final tmp = shuffled[i];
+          shuffled[i] = shuffled[j];
+          shuffled[j] = tmp;
+        }
+        final candidate = shuffled.take(rules.poolSize).toList(growable: false);
+        if (_hasModeDiversity(candidate)) {
+          poolDefinitions
+            ..clear()
+            ..addAll(candidate);
+          break;
+        }
+        if (attempts == 8) {
+          poolDefinitions
+            ..clear()
+            ..addAll(candidate);
+        }
+      }
+    } else {
+      poolDefinitions.addAll(uniqueCatalog);
+      while (poolDefinitions.length < rules.poolSize) {
+        rng = _nextRng(rng);
+        poolDefinitions.add(uniqueCatalog[rng % uniqueCatalog.length]);
+      }
+    }
+
+    final pool = <PieceInstance>[];
+    for (final definition in poolDefinitions) {
       pool.add(
         PieceInstance(
           instanceId: 'p$nextPieceId',
@@ -801,6 +834,31 @@ class TurnEngine {
     required CombatMode attackerAttackMode,
   }) {
     return defenderDefenseMode == attackerAttackMode;
+  }
+
+  bool _hasModeDiversity(List<PieceDefinition> pool) {
+    var hasPhysicalAttack = false;
+    var hasMagicalAttack = false;
+    var hasPhysicalDefense = false;
+    var hasMagicalDefense = false;
+
+    for (final piece in pool) {
+      if (piece.attackMode == CombatMode.physical) {
+        hasPhysicalAttack = true;
+      } else {
+        hasMagicalAttack = true;
+      }
+      if (piece.defenseMode == CombatMode.physical) {
+        hasPhysicalDefense = true;
+      } else {
+        hasMagicalDefense = true;
+      }
+    }
+
+    return hasPhysicalAttack &&
+        hasMagicalAttack &&
+        hasPhysicalDefense &&
+        hasMagicalDefense;
   }
 
   int _nextRng(int state) {

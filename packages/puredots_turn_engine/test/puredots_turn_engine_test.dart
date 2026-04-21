@@ -54,6 +54,23 @@ void main() {
       expect(state.phase, TurnPhase.mainActions); // auto-skip attack if empty
     });
 
+    test('pool refresh uses unique spirits and includes both mode types', () {
+      final state = engine.newMatch(
+        draftCatalog: canonicalPlaceholderCatalog,
+        rules: rules,
+      );
+
+      final definitionIds = state.pool.map((p) => p.definition.id).toSet();
+      final attackModes = state.pool.map((p) => p.definition.attackMode).toSet();
+      final defenseModes = state.pool
+          .map((p) => p.definition.defenseMode)
+          .toSet();
+
+      expect(definitionIds.length, 5);
+      expect(attackModes, {CombatMode.physical, CombatMode.magical});
+      expect(defenseModes, {CombatMode.physical, CombatMode.magical});
+    });
+
     test('first turn allows binding only 1 spirit from pool', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
       final unitId = state.activePlayer.units.first.unitId;
@@ -315,4 +332,3 @@ GameState _apply(
   expect(result.applied, isTrue, reason: result.reason);
   return result.state;
 }
-
