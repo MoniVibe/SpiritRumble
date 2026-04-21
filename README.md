@@ -1,17 +1,25 @@
-# bullethole_cards
+# Spirit Rumble
 
-A new Flutter project.
+## Play Without Local Scripts
 
-## Getting Started
+This repo auto-deploys the web build to GitHub Pages on every push to `main`.
 
-This project is a starting point for a Flutter application.
+After Pages is enabled in repository settings, the game is available at:
 
-A few resources to get you started if this is your first Flutter project:
+`https://monivibe.github.io/SpiritRumble/`
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+This avoids Windows Smart App Control blocking local launcher scripts on other PCs.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Local Run (Developer)
+
+```powershell
+flutter pub get
+flutter run -d edge
+```
+
+Or use:
+
+`Launch Spirit Rumble.bat`
+
+If Smart App Control blocks downloaded launchers, right-click the downloaded ZIP,
+open `Properties`, click `Unblock`, then extract.
