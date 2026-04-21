@@ -10,6 +10,26 @@ After Pages is enabled in repository settings, the game is available at:
 
 This avoids Windows Smart App Control blocking local launcher scripts on other PCs.
 
+## Multiplayer-Ready Foundation
+
+The project now includes an authoritative multiplayer contract layer so we can
+plug in real hosting later without rewriting the rules/UI core:
+
+- Shared wire codec in `packages/puredots_turn_engine`:
+  - `TurnEngineJsonCodec` for `GameState`, `GameCommand`, and `MatchRules`
+  - Protocol envelopes: `MatchmakingRequest`, `MatchAssignment`,
+    `CommandEnvelope`, `StateEnvelope`
+- App-side backend abstraction:
+  - `lib/battle/application/multiplayer/multiplayer_backend.dart`
+- Local authoritative simulation backend for development/tests:
+  - `lib/battle/application/multiplayer/in_memory_multiplayer_backend.dart`
+- Client session primitive for future UI matchmaking integration:
+  - `lib/battle/application/multiplayer/multiplayer_client.dart`
+
+This means current gameplay remains local, but networking concerns (matchmaking,
+command submission, state snapshots, versioning) are already separated and
+test-covered.
+
 ### GitHub Pages Setup (Required Once)
 
 1. In `Settings` -> `Pages`, set `Source` to `GitHub Actions`.
