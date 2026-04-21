@@ -1,5 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
+
+import 'match_diagnostics_storage_io.dart'
+    if (dart.library.html) 'match_diagnostics_storage_web.dart'
+    as storage;
 
 import 'package:puredots_turn_engine/puredots_turn_engine.dart';
 
@@ -82,7 +85,7 @@ class MatchDiagnosticsSnapshot {
 
 class MatchDiagnosticsStore {
   MatchDiagnosticsStore({String? filePath})
-    : _filePath = filePath ?? _defaultFilePath();
+    : _filePath = storage.resolveDiagnosticsPath(filePath);
 
   static const int maxSavedMatches = 5;
 
@@ -91,12 +94,11 @@ class MatchDiagnosticsStore {
   String get filePath => _filePath;
 
   List<MatchDiagnosticsSnapshot> loadRecent() {
-    final file = File(_filePath);
-    if (!file.existsSync()) {
+    final raw = storage.readDiagnostics(_filePath);
+    if (raw == null || raw.isEmpty) {
       return const <MatchDiagnosticsSnapshot>[];
     }
     try {
-      final raw = file.readAsStringSync();
       final decoded = jsonDecode(raw);
       if (decoded is! List) {
         return const <MatchDiagnosticsSnapshot>[];
@@ -162,17 +164,9 @@ class MatchDiagnosticsStore {
   }
 
   void _write(List<MatchDiagnosticsSnapshot> snapshots) {
-    final file = File(_filePath);
-    file.parent.createSync(recursive: true);
     final encoded = const JsonEncoder.withIndent(
       '  ',
     ).convert(snapshots.map((entry) => entry.toJson()).toList(growable: false));
-    file.writeAsStringSync(encoded);
-  }
-
-  static String _defaultFilePath() {
-    final sep = Platform.pathSeparator;
-    final base = Platform.environment['LOCALAPPDATA'] ?? Directory.current.path;
-    return '$base${sep}SpiritRumble${sep}diagnostics${sep}recent_matches.json';
+    storage.writeDiagnostics(_filePath, encoded);
   }
 }
