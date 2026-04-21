@@ -27,14 +27,19 @@ class SpiritCardView extends StatelessWidget {
     final tiny = width < 84 || height < 120;
     final padding = tiny ? 6.0 : (compact ? 8.0 : 10.0);
     final avatarRadius = tiny ? 16.0 : (compact ? 20.0 : 24.0);
-    final titleStyle = compact
-        ? Theme.of(context).textTheme.labelLarge
-        : Theme.of(context).textTheme.titleMedium;
     final accent = switch (piece.element) {
       SpiritElement.red => const Color(0xFFEF5350),
       SpiritElement.green => const Color(0xFF66BB6A),
       SpiritElement.blue => const Color(0xFF42A5F5),
     };
+    final modeTextStyle = (compact
+            ? Theme.of(context).textTheme.titleSmall
+            : Theme.of(context).textTheme.titleMedium)
+        ?.copyWith(
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.8,
+          color: Colors.white,
+        );
     final borderColor = elevated || highlighted
         ? accent.withValues(alpha: 0.95)
         : Colors.white24;
@@ -83,39 +88,28 @@ class SpiritCardView extends StatelessWidget {
             children: <Widget>[
               FittedBox(
                 fit: BoxFit.scaleDown,
-                child: Row(
-                  children: <Widget>[
-                    _TagPill(
-                      text: compact
-                          ? _shortElement(piece.element)
-                          : elementLabel(piece.element),
-                      color: accent,
-                    ),
-                    const SizedBox(width: 6),
-                    _TagPill(
-                      text:
-                          '${compact ? 'ATK' : 'Attack'} ${_shortMode(piece.attackMode)}',
-                      color: Colors.white24,
-                    ),
-                    const SizedBox(width: 6),
-                    _TagPill(
-                      text:
-                          '${compact ? 'DEF' : 'Defense'} ${_shortMode(piece.defenseMode)}',
-                      color: Colors.white24,
-                    ),
-                  ],
+                child: _TagPill(
+                  text: compact
+                      ? _shortElement(piece.element)
+                      : elementLabel(piece.element),
+                  color: accent,
                 ),
               ),
               SizedBox(height: tiny ? 4 : 6),
+              Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(_fullMode(piece.attackMode), style: modeTextStyle),
+                ),
+              ),
+              SizedBox(height: tiny ? 2 : 6),
               Expanded(
                 child: Center(
                   child: CircleAvatar(
                     radius: avatarRadius,
                     backgroundColor: accent.withValues(alpha: 0.25),
                     child: Text(
-                      piece.name.isEmpty
-                          ? '?'
-                          : piece.name.substring(0, 1).toUpperCase(),
+                      _elementGlyph(piece.element),
                       style: compact
                           ? Theme.of(context).textTheme.titleMedium
                           : Theme.of(context).textTheme.titleLarge,
@@ -123,12 +117,12 @@ class SpiritCardView extends StatelessWidget {
                   ),
                 ),
               ),
-              SizedBox(height: tiny ? 2 : 4),
-              Text(
-                piece.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: titleStyle,
+              SizedBox(height: tiny ? 2 : 6),
+              Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(_fullMode(piece.defenseMode), style: modeTextStyle),
+                ),
               ),
             ],
           ),
@@ -137,10 +131,18 @@ class SpiritCardView extends StatelessWidget {
     );
   }
 
-  String _shortMode(CombatMode mode) {
+  String _fullMode(CombatMode mode) {
     return switch (mode) {
-      CombatMode.physical => 'PHY',
-      CombatMode.magical => 'MAG',
+      CombatMode.physical => 'PHYSICAL',
+      CombatMode.magical => 'MAGICAL',
+    };
+  }
+
+  String _elementGlyph(SpiritElement element) {
+    return switch (element) {
+      SpiritElement.red => 'R',
+      SpiritElement.green => 'G',
+      SpiritElement.blue => 'B',
     };
   }
 
