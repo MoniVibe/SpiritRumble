@@ -113,6 +113,65 @@ void main() {
       );
     });
 
+    test('validate defenders allows turn end even with no selections', () {
+      const localRules = MatchRules(
+        firstPlayerOpeningDraft: 1,
+        standardDraft: 1,
+      );
+      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
+
+      state = _draftByDefinition(
+        engine,
+        state,
+        'flame_alpha',
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+        rules: localRules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+
+      state = _draftByDefinition(
+        engine,
+        state,
+        'grove_wall',
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+        rules: localRules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      expect(state.phase, TurnPhase.chooseDefenders);
+
+      final active = state.activePlayer;
+      final units = List<UnitState>.from(active.units);
+      units[0] = units[0].copyWith(clearDefendingPieceIndex: true);
+      final players = List<PlayerState>.from(state.players);
+      players[state.activePlayerIndex] = active.copyWith(units: units);
+      state = state.copyWith(players: players);
+
+      final validated = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        EndTurnMove(),
+        rules: localRules,
+      );
+
+      expect(validated.applied, isTrue, reason: validated.reason);
+      expect(validated.state.activePlayerIndex, 0);
+      expect(validated.state.phase, TurnPhase.draftFromPool);
+    });
+
     test('play to new unit works', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
       state = _apply(
@@ -363,7 +422,7 @@ void main() {
       expect(state.players[1].health, 20);
     });
 
-    test('defender choice persists through opponent turn', () {
+    test('unset defender remains unset through opponent turn', () {
       const localRules = MatchRules(
         firstPlayerOpeningDraft: 1,
         standardDraft: 1,
@@ -399,14 +458,9 @@ void main() {
         ),
         rules: localRules,
       );
-      final p2UnitId = state.activePlayer.units.first.unitId;
       state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        ChooseDefenderMove(unitId: p2UnitId, pieceIndex: 0),
-        rules: localRules,
-      );
+      expect(state.phase, TurnPhase.chooseDefenders);
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
       state = _apply(
         engine,
         state,
@@ -415,15 +469,89 @@ void main() {
       );
       state = _apply(engine, state, EndTurnMove(), rules: localRules);
       expect(state.phase, TurnPhase.chooseDefenders);
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+
+      expect(state.activePlayerIndex, 1);
+      expect(state.phase, TurnPhase.draftFromPool);
+      expect(state.players[0].units.first.defendingPieceIndex, isNull);
+      expect(state.players[0].units.first.unitId, p1UnitId);
+    });
+
+    test('only units with selected defenders can be targeted', () {
+      const localRules = MatchRules(
+        firstPlayerOpeningDraft: 1,
+        standardDraft: 1,
+      );
+      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
+
+      state = _draftByDefinition(
+        engine,
+        state,
+        'flame_alpha',
+        rules: localRules,
+      );
       state = _apply(
         engine,
         state,
-        ChooseDefenderMove(unitId: p1UnitId, pieceIndex: 0),
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+        rules: localRules,
+      );
+      final attackerUnitId = state.activePlayer.units.first.unitId;
+      state = _apply(
+        engine,
+        state,
+        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
+        rules: localRules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+
+      state = _draftByDefinition(
+        engine,
+        state,
+        'grove_wall',
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+        rules: localRules,
+      );
+      final defenderUnitId = state.activePlayer.units.first.unitId;
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      expect(state.phase, TurnPhase.chooseDefenders);
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      state = _apply(
+        engine,
+        state,
+        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
         rules: localRules,
       );
 
-      expect(state.activePlayerIndex, 1);
-      expect(state.players[0].units.first.defendingPieceIndex, 0);
+      final deniedTarget = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        AttackUnitMove(
+          attackerUnitId: attackerUnitId,
+          targetUnitId: defenderUnitId,
+        ),
+        rules: localRules,
+      );
+      expect(deniedTarget.applied, isFalse);
+      expect(deniedTarget.reason, contains('no defending spirit selected'));
+
+      final direct = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        AttackUnitMove(attackerUnitId: attackerUnitId),
+        rules: localRules,
+      );
+      expect(direct.applied, isTrue, reason: direct.reason);
+      expect(direct.state.players[1].health, 20);
     });
 
     test('win triggers when opponent has zero field pieces', () {
@@ -472,12 +600,14 @@ void main() {
       );
       final defenderUnitId = state.activePlayer.units.first.unitId;
       state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      expect(state.phase, TurnPhase.chooseDefenders);
       state = _apply(
         engine,
         state,
         ChooseDefenderMove(unitId: defenderUnitId, pieceIndex: 0),
         rules: localRules,
       );
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
       state = _apply(
         engine,
         state,

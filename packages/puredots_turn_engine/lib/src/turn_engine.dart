@@ -144,7 +144,7 @@ class TurnEngine {
       case AttackUnitMove _:
         next = _applyAttackUnit(next, command);
       case ChooseDefenderMove _:
-        next = _applyChooseDefender(next, command, rules: rules);
+        next = _applyChooseDefender(next, command);
       case EndTurnMove _:
         next = _applyEndTurn(next, rules: rules);
     }
@@ -279,9 +279,9 @@ class TurnEngine {
     }
 
     if (command.targetUnitId == null) {
-      if (state.opposingPlayer.units.isNotEmpty) {
+      if (_hasAnyTargetableDefendingUnits(state.opposingPlayer)) {
         return const CommandCheck.denied(
-          'direct shaman attacks are allowed only when no defender units remain',
+          'direct shaman attacks are allowed only when no defending spirits remain',
         );
       }
       return const CommandCheck.allowed();
@@ -293,6 +293,12 @@ class TurnEngine {
     );
     if (targetIndex == -1) {
       return const CommandCheck.denied('target unit not found');
+    }
+    final targetUnit = state.opposingPlayer.units[targetIndex];
+    if (!_hasValidDefendingPiece(targetUnit)) {
+      return const CommandCheck.denied(
+        'target unit has no defending spirit selected',
+      );
     }
     return const CommandCheck.allowed();
   }
@@ -316,12 +322,15 @@ class TurnEngine {
   }
 
   CommandCheck _canApplyEndTurn(GameState state) {
-    if (state.phase != TurnPhase.mainActions) {
-      return const CommandCheck.denied(
-        'end turn is only valid in main actions',
-      );
+    if (state.phase == TurnPhase.mainActions) {
+      return const CommandCheck.allowed();
     }
-    return const CommandCheck.allowed();
+    if (state.phase == TurnPhase.chooseDefenders) {
+      return const CommandCheck.allowed();
+    }
+    return const CommandCheck.denied(
+      'end turn is only valid in main actions or choose defenders',
+    );
   }
 
   GameState _applyDraftFromPool(
@@ -465,11 +474,7 @@ class TurnEngine {
     return _resolvePendingCombat(next);
   }
 
-  GameState _applyChooseDefender(
-    GameState state,
-    ChooseDefenderMove command, {
-    required MatchRules rules,
-  }) {
+  GameState _applyChooseDefender(GameState state, ChooseDefenderMove command) {
     final active = state.activePlayer;
     final unitIndex = _findUnitIndex(active, command.unitId);
     final units = List<UnitState>.from(active.units);
@@ -485,10 +490,18 @@ class TurnEngine {
       next,
       '${active.id} set defender piece ${command.pieceIndex} for ${command.unitId}.',
     );
-    return _advanceAfterDefenderSelection(next, rules: rules);
+    return next;
   }
 
   GameState _applyEndTurn(GameState state, {required MatchRules rules}) {
+    if (state.phase == TurnPhase.chooseDefenders) {
+      var next = _appendEvent(
+        state,
+        '${state.activePlayer.id} completed defender selection.',
+      );
+      return _handoffTurn(next, rules: rules);
+    }
+
     if (!_requiresDefenderSelection(state)) {
       var next = _appendEvent(
         state,
@@ -502,22 +515,7 @@ class TurnEngine {
       next,
       '${state.activePlayer.id} entered defender selection.',
     );
-    return _advanceAfterDefenderSelection(next, rules: rules);
-  }
-
-  GameState _advanceAfterDefenderSelection(
-    GameState state, {
-    required MatchRules rules,
-  }) {
-    if (!_allUnitsHaveDefenders(state.activePlayer)) {
-      return state;
-    }
-    var next = state.copyWith(phase: TurnPhase.endTurn);
-    next = _appendEvent(
-      next,
-      '${state.activePlayer.id} completed defender selection.',
-    );
-    return _handoffTurn(next, rules: rules);
+    return next;
   }
 
   GameState _handoffTurn(GameState state, {required MatchRules rules}) {
@@ -653,11 +651,13 @@ class TurnEngine {
       );
     }
     final defenderUnit = defenderPlayer.units[defenderUnitIndex];
-    final defenderPieceIndex =
-        (defenderUnit.defendingPieceIndex != null &&
-            defenderUnit.defendingPieceIndex! < defenderUnit.pieces.length)
-        ? defenderUnit.defendingPieceIndex!
-        : 0;
+    if (!_hasValidDefendingPiece(defenderUnit)) {
+      return _appendEvent(
+        state.copyWith(phase: TurnPhase.mainActions, clearPendingCombat: true),
+        'Attack fizzled: target has no defending spirit selected.',
+      );
+    }
+    final defenderPieceIndex = defenderUnit.defendingPieceIndex!;
     final defenderPiece = defenderUnit.pieces[defenderPieceIndex];
 
     final result = resolveAttack(
@@ -761,27 +761,15 @@ class TurnEngine {
           (unit.defendingPieceIndex != null &&
               unit.defendingPieceIndex! < pieces.length)
           ? unit.defendingPieceIndex
-          : 0;
+          : null;
       units[unitIndex] = unit.copyWith(
         pieces: pieces,
         attackingPieceIndex: safeAttackerIndex,
+        clearDefendingPieceIndex: safeDefenderIndex == null,
         defendingPieceIndex: safeDefenderIndex,
       );
     }
     return _replacePlayer(state, ownerIndex, player.copyWith(units: units));
-  }
-
-  bool _allUnitsHaveDefenders(PlayerState player) {
-    for (final unit in player.units) {
-      if (unit.pieces.isEmpty) {
-        continue;
-      }
-      final index = unit.defendingPieceIndex;
-      if (index == null || index < 0 || index >= unit.pieces.length) {
-        return false;
-      }
-    }
-    return true;
   }
 
   bool _requiresDefenderSelection(GameState state) {
@@ -793,6 +781,15 @@ class TurnEngine {
     return state.opposingPlayer.units.any(
       (unit) => unit.pieces.isNotEmpty && unit.summonedTurn < nextTurnNumber,
     );
+  }
+
+  bool _hasValidDefendingPiece(UnitState unit) {
+    final index = unit.defendingPieceIndex;
+    return index != null && index >= 0 && index < unit.pieces.length;
+  }
+
+  bool _hasAnyTargetableDefendingUnits(PlayerState player) {
+    return player.units.any(_hasValidDefendingPiece);
   }
 
   int _requiredDraftPicks(GameState state, {required MatchRules rules}) {

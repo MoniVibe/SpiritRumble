@@ -63,14 +63,6 @@ class OpponentAi {
         return chooseAttacker;
       }
 
-      if (enemy.units.isEmpty) {
-        final direct = AttackUnitMove(attackerUnitId: unit.unitId);
-        if (isAllowed(direct)) {
-          return direct;
-        }
-        continue;
-      }
-
       final sortedTargets = List<UnitState>.from(enemy.units)
         ..sort(
           (a, b) => _unitDefenderDefense(a).compareTo(_unitDefenderDefense(b)),
@@ -83,6 +75,11 @@ class OpponentAi {
         if (isAllowed(attack)) {
           return attack;
         }
+      }
+
+      final direct = AttackUnitMove(attackerUnitId: unit.unitId);
+      if (isAllowed(direct)) {
+        return direct;
       }
     }
 
@@ -118,6 +115,7 @@ class OpponentAi {
     GameState state,
     bool Function(GameCommand command) isAllowed,
   ) {
+    var needsAssignment = false;
     for (final unit in state.activePlayer.units) {
       if (unit.pieces.isEmpty) {
         continue;
@@ -126,6 +124,7 @@ class OpponentAi {
       if (current != null && current >= 0 && current < unit.pieces.length) {
         continue;
       }
+      needsAssignment = true;
       final index = _bestDefenseIndex(unit);
       final command = ChooseDefenderMove(
         unitId: unit.unitId,
@@ -133,6 +132,12 @@ class OpponentAi {
       );
       if (isAllowed(command)) {
         return command;
+      }
+    }
+    if (!needsAssignment) {
+      final validate = EndTurnMove();
+      if (isAllowed(validate)) {
+        return validate;
       }
     }
     return null;

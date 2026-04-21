@@ -216,6 +216,13 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
           child: LayoutBuilder(
             builder: (BuildContext context, BoxConstraints constraints) {
               final flex = _BandFlex.forHeight(constraints.maxHeight);
+              final selectedAttackerUnitId = view.selectedAttackerUnitId;
+              final canDirectAttack =
+                  selectedAttackerUnitId != null &&
+                  view.isMainPhase &&
+                  _controller
+                      .canApply(BattleIntents.attack(selectedAttackerUnitId))
+                      .allowed;
               return Padding(
                 padding: const EdgeInsets.all(8),
                 child: Stack(
@@ -234,10 +241,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                             isActive: state.activePlayerIndex == 1,
                             title: 'Opponent Shaman',
                             bandKey: _opponentShamanKey,
-                            incomingPreview:
-                                view.isMainPhase &&
-                                view.selectedAttackerUnitId != null &&
-                                view.opposingPlayer.units.isEmpty,
+                            incomingPreview: canDirectAttack,
                             incomingHover: _hoverDirectAttack,
                             onDirectAttackHoverChanged: (hovered) {
                               if (!mounted) {
@@ -247,12 +251,8 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                                 _hoverDirectAttack = hovered;
                               });
                             },
-                            onTapDirectAttack:
-                                view.selectedAttackerUnitId != null &&
-                                    view.isMainPhase &&
-                                    view.opposingPlayer.units.isEmpty
-                                ? () =>
-                                      _queueAttack(view.selectedAttackerUnitId!)
+                            onTapDirectAttack: canDirectAttack
+                                ? () => _queueAttack(selectedAttackerUnitId)
                                 : null,
                           ),
                         ),
@@ -414,6 +414,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   }
 
   Widget _buildOpponentTableBand(BattleViewState view) {
+    final selectedAttackerUnitId = view.selectedAttackerUnitId;
     return _BandFrame(
       title: 'Opponent Table',
       child: view.opposingPlayer.units.isEmpty
@@ -423,7 +424,16 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
               itemBuilder: (BuildContext context, int index) {
                 final unit = view.opposingPlayer.units[index];
                 final canTarget =
-                    view.selectedAttackerUnitId != null && view.isMainPhase;
+                    selectedAttackerUnitId != null &&
+                    view.isMainPhase &&
+                    _controller
+                        .canApply(
+                          BattleIntents.attack(
+                            selectedAttackerUnitId,
+                            targetUnitId: unit.unitId,
+                          ),
+                        )
+                        .allowed;
                 final incomingHover = _hoverAttackTargetUnitId == unit.unitId;
                 return Container(
                   key: _opponentUnitKey(unit.unitId),
@@ -452,7 +462,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                       incomingHovered: incomingHover,
                       onUnitTap: canTarget
                           ? () => _queueAttack(
-                              view.selectedAttackerUnitId!,
+                              selectedAttackerUnitId,
                               targetUnitId: unit.unitId,
                             )
                           : null,
@@ -582,10 +592,17 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
               onPressed: () => _dispatch(BattleIntents.endTurn()),
               child: const Text('End Turn'),
             ),
-          if (view.isDraftPhase || view.isChooseDefendersPhase)
+          if (view.isChooseDefendersPhase)
+            FilledButton(
+              onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
+                  ? () => _dispatch(BattleIntents.endTurn())
+                  : null,
+              child: const Text('Validate Defenders'),
+            ),
+          if (view.isDraftPhase)
             FilledButton.tonal(
               onPressed: null,
-              child: Text(view.isDraftPhase ? 'Drafting...' : 'Set Defenders'),
+              child: const Text('Drafting...'),
             ),
           const SizedBox(width: 8),
           FilledButton.tonal(
