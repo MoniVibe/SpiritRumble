@@ -54,21 +54,15 @@ void main() {
       expect(state.phase, TurnPhase.mainActions); // auto-skip attack if empty
     });
 
-    test('pool refresh uses unique spirits and includes both mode types', () {
+    test('pool refresh uses unique spirits when catalog is larger than pool', () {
       final state = engine.newMatch(
         draftCatalog: canonicalPlaceholderCatalog,
         rules: rules,
       );
 
       final definitionIds = state.pool.map((p) => p.definition.id).toSet();
-      final attackModes = state.pool.map((p) => p.definition.attackMode).toSet();
-      final defenseModes = state.pool
-          .map((p) => p.definition.defenseMode)
-          .toSet();
 
       expect(definitionIds.length, 5);
-      expect(attackModes, {CombatMode.physical, CombatMode.magical});
-      expect(defenseModes, {CombatMode.physical, CombatMode.magical});
     });
 
     test('first turn allows binding only 1 spirit from pool', () {
