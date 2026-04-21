@@ -93,9 +93,14 @@ class SpiritCardView extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     _TagPill(
-                      text: compact
-                          ? _shortMode(piece.attackMode)
-                          : modeLabel(piece.attackMode),
+                      text:
+                          '${compact ? 'ATK' : 'Attack'} ${_shortMode(piece.attackMode)}',
+                      color: Colors.white24,
+                    ),
+                    const SizedBox(width: 6),
+                    _TagPill(
+                      text:
+                          '${compact ? 'DEF' : 'Defense'} ${_shortMode(piece.defenseMode)}',
                       color: Colors.white24,
                     ),
                   ],
@@ -124,17 +129,6 @@ class SpiritCardView extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: titleStyle,
-              ),
-              SizedBox(height: tiny ? 1 : 3),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Row(
-                  children: <Widget>[
-                    Text('${compact ? 'A' : 'ATK'} ${piece.attack}'),
-                    const SizedBox(width: 10),
-                    Text('${compact ? 'D' : 'DEF'} ${piece.defense}'),
-                  ],
-                ),
               ),
             ],
           ),

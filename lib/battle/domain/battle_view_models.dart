@@ -23,8 +23,8 @@ String phaseLabel(TurnPhase phase) {
 
 String pieceLabel(PieceDefinition piece) {
   return '${piece.name}\n${elementLabel(piece.element)} '
-      'ATK ${piece.attack}/${modeLabel(piece.attackMode)} '
-      'DEF ${piece.defense}/${modeLabel(piece.defenseMode)}';
+      'ATK ${modeLabel(piece.attackMode)} '
+      'DEF ${modeLabel(piece.defenseMode)}';
 }
 
 String modeLabel(CombatMode mode) {
