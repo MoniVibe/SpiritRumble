@@ -29,18 +29,6 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Configure Git auth for private dependencies
-        if: ${{ secrets.PUREFLUTTER_READ_TOKEN != '' }}
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.PUREFLUTTER_READ_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Verify dependency access
-        run: |
-          if ! git ls-remote https://github.com/gammula/pureflutter.git > /dev/null; then
-            echo "::error::Cannot access https://github.com/gammula/pureflutter.git. Add Actions secret PUREFLUTTER_READ_TOKEN with read access to that repository."
-            exit 1
-          fi
-
       - name: Install dependencies
         run: flutter pub get
 

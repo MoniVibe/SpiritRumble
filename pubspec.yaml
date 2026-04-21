@@ -35,9 +35,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   bullethole_shared:
-    git:
-      url: https://github.com/gammula/pureflutter.git
-      ref: 0af4e1d377114a6bf4841b2272174fa17e720dcc
+    path: packages/bullethole_shared
   puredots_turn_engine:
     path: packages/puredots_turn_engine
 

@@ -12,15 +12,10 @@ This avoids Windows Smart App Control blocking local launcher scripts on other P
 
 ### GitHub Pages Setup (Required Once)
 
-1. In GitHub, open `Settings` -> `Secrets and variables` -> `Actions`.
-2. Add repository secret:
-   `PUREFLUTTER_READ_TOKEN`
-3. Value should be a GitHub token that has read access to:
-   `https://github.com/gammula/pureflutter.git`
-4. In `Settings` -> `Pages`, set `Source` to `GitHub Actions`.
+1. In `Settings` -> `Pages`, set `Source` to `GitHub Actions`.
+2. Run workflow `Deploy Flutter Web To GitHub Pages` from `Actions`.
 
-Without this secret, the deploy workflow cannot run `flutter pub get` because
-`bullethole_shared` is pulled from a private git dependency.
+No extra repository secrets are required.
 
 ## Local Run (Developer)
 
