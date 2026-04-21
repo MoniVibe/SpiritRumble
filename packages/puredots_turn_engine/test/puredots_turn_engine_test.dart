@@ -54,7 +54,7 @@ void main() {
       expect(state.phase, TurnPhase.draftFromPool);
     });
 
-    test('turn 1 drafts 1 spirit then enters attack step', () {
+    test('turn 1 drafts 1 spirit then auto-enters main actions when no attacks', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
 
       state = _apply(
@@ -65,7 +65,7 @@ void main() {
       );
 
       expect(state.activePlayer.hand.length, 1);
-      expect(state.phase, TurnPhase.attackStep);
+      expect(state.phase, TurnPhase.mainActions);
     });
 
     test('later turns draft 2 spirits', () {
@@ -81,14 +81,8 @@ void main() {
         state,
         EndTurnMove(),
         rules: rules,
-      ); // attack->main
-      state = _apply(engine, state, EndTurnMove(), rules: rules); // main->def
-      state = _apply(
-        engine,
-        state,
-        EndTurnMove(),
-        rules: rules,
-      ); // def->handoff
+      ); // main->def
+      state = _apply(engine, state, EndTurnMove(), rules: rules); // def->handoff
 
       expect(state.activePlayerIndex, 1);
       expect(state.phase, TurnPhase.draftFromPool);
@@ -107,7 +101,7 @@ void main() {
         rules: rules,
       );
 
-      expect(state.phase, TurnPhase.attackStep);
+      expect(state.phase, TurnPhase.mainActions);
       expect(state.activePlayer.hand.length, 2);
     });
 
@@ -128,12 +122,6 @@ void main() {
         DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
         rules: localRules,
       );
-      state = _apply(
-        engine,
-        state,
-        EndTurnMove(),
-        rules: localRules,
-      ); // to main
 
       state = _apply(engine, state, SummonTotemMove(), rules: localRules);
       expect(state.activePlayer.units.length, 2);

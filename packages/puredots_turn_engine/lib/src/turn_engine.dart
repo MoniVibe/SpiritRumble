@@ -404,7 +404,15 @@ class TurnEngine {
     final requiredPicks = _requiredDraftPicks(next, rules: rules);
     if (next.activePlayer.poolPicksThisTurn >= requiredPicks) {
       next = next.copyWith(phase: TurnPhase.attackStep);
-      next = _appendEvent(next, '${active.id} entered attack step.');
+      if (_hasPendingMandatoryAttacks(next)) {
+        next = _appendEvent(next, '${active.id} entered attack step.');
+      } else {
+        next = next.copyWith(phase: TurnPhase.mainActions);
+        next = _appendEvent(
+          next,
+          '${active.id} has no available attacks and entered main actions.',
+        );
+      }
     }
     return next;
   }
