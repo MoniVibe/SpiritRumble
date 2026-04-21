@@ -10,6 +10,8 @@ class OpponentAi {
     switch (state.phase) {
       case TurnPhase.draftFromPool:
         return _pickDraft(state, isAllowed);
+      case TurnPhase.attackStep:
+        return _pickAttack(state, isAllowed);
       case TurnPhase.mainActions:
         return _pickMainAction(state, isAllowed);
       case TurnPhase.chooseDefenders:
@@ -41,12 +43,13 @@ class OpponentAi {
     return null;
   }
 
-  static GameCommand? _pickMainAction(
+  static GameCommand? _pickAttack(
     GameState state,
     bool Function(GameCommand command) isAllowed,
   ) {
     final active = state.activePlayer;
     final enemy = state.opposingPlayer;
+    final targetable = enemy.units.where(_hasValidDefendingSpirit).toList();
 
     for (final unit in active.units) {
       if (unit.pieces.isEmpty || unit.attackedThisTurn) {
@@ -63,11 +66,7 @@ class OpponentAi {
         return chooseAttacker;
       }
 
-      final sortedTargets = List<UnitState>.from(enemy.units)
-        ..sort(
-          (a, b) => _unitDefenderDefense(a).compareTo(_unitDefenderDefense(b)),
-        );
-      for (final target in sortedTargets) {
+      for (final target in targetable) {
         final attack = AttackUnitMove(
           attackerUnitId: unit.unitId,
           targetUnitId: target.unitId,
@@ -76,10 +75,25 @@ class OpponentAi {
           return attack;
         }
       }
+    }
 
-      final direct = AttackUnitMove(attackerUnitId: unit.unitId);
-      if (isAllowed(direct)) {
-        return direct;
+    final endAttack = EndTurnMove();
+    if (isAllowed(endAttack)) {
+      return endAttack;
+    }
+    return null;
+  }
+
+  static GameCommand? _pickMainAction(
+    GameState state,
+    bool Function(GameCommand command) isAllowed,
+  ) {
+    final active = state.activePlayer;
+
+    if (active.totemsInHand > 0) {
+      final summon = SummonTotemMove();
+      if (isAllowed(summon) && active.units.length < 4) {
+        return summon;
       }
     }
 
@@ -169,17 +183,9 @@ class OpponentAi {
     return bestIndex;
   }
 
-  static int _unitDefenderDefense(UnitState unit) {
-    if (unit.pieces.isEmpty) {
-      return 0;
-    }
-    final index =
-        (unit.defendingPieceIndex != null &&
-            unit.defendingPieceIndex! >= 0 &&
-            unit.defendingPieceIndex! < unit.pieces.length)
-        ? unit.defendingPieceIndex!
-        : 0;
-    return unit.pieces[index].definition.defense;
+  static bool _hasValidDefendingSpirit(UnitState unit) {
+    final idx = unit.defendingPieceIndex;
+    return idx != null && idx >= 0 && idx < unit.pieces.length;
   }
 
   static PieceInstance _bestHandPiece(List<PieceInstance> hand) {

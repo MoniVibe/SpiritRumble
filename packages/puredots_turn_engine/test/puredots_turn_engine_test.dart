@@ -4,34 +4,36 @@ import 'package:test/test.dart';
 void main() {
   const engine = TurnEngine();
   const rules = MatchRules(
-    startingHealth: 24,
     poolSize: 5,
     firstPlayerOpeningDraft: 1,
     standardDraft: 2,
+    startingTotemsOnField: 1,
+    startingTotemsInHand: 3,
+    poolSeed: 1234,
   );
 
   final catalog = <PieceDefinition>[
     const PieceDefinition(
-      id: 'flame_alpha',
-      name: 'Flame Alpha',
+      id: 'red_phys_mag',
+      name: 'Red Duelist',
       element: SpiritElement.red,
       attackMode: CombatMode.physical,
       defenseMode: CombatMode.magical,
-      attack: 4,
+      attack: 3,
       defense: 2,
     ),
     const PieceDefinition(
-      id: 'grove_wall',
-      name: 'Grove Wall',
+      id: 'green_mag_mag',
+      name: 'Green Oracle',
       element: SpiritElement.green,
       attackMode: CombatMode.magical,
       defenseMode: CombatMode.magical,
-      attack: 1,
+      attack: 2,
       defense: 3,
     ),
     const PieceDefinition(
-      id: 'tide_guard',
-      name: 'Tide Guard',
+      id: 'blue_mag_phys',
+      name: 'Blue Guard',
       element: SpiritElement.blue,
       attackMode: CombatMode.magical,
       defenseMode: CombatMode.physical,
@@ -40,19 +42,54 @@ void main() {
     ),
   ];
 
-  group('TurnEngine command flow', () {
-    test('turn 1 draft gives 1, later turns draft gives 2', () {
+  group('TurnEngine rule v1', () {
+    test('players start with one totem on field and three in hand', () {
+      final state = engine.newMatch(draftCatalog: catalog, rules: rules);
+
+      expect(state.players[0].units.length, 1);
+      expect(state.players[1].units.length, 1);
+      expect(state.players[0].totemsInHand, 3);
+      expect(state.players[1].totemsInHand, 3);
+      expect(state.pool.length, 5);
+      expect(state.phase, TurnPhase.draftFromPool);
+    });
+
+    test('turn 1 drafts 1 spirit then enters attack step', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
 
       state = _apply(
         engine,
         state,
         DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: rules,
       );
-      expect(state.activePlayer.hand.length, 1);
-      expect(state.phase, TurnPhase.mainActions);
 
-      state = _apply(engine, state, EndTurnMove());
+      expect(state.activePlayer.hand.length, 1);
+      expect(state.phase, TurnPhase.attackStep);
+    });
+
+    test('later turns draft 2 spirits', () {
+      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
+      state = _apply(
+        engine,
+        state,
+        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: rules,
+      );
+      state = _apply(
+        engine,
+        state,
+        EndTurnMove(),
+        rules: rules,
+      ); // attack->main
+      state = _apply(engine, state, EndTurnMove(), rules: rules); // main->def
+      state = _apply(
+        engine,
+        state,
+        EndTurnMove(),
+        rules: rules,
+      ); // def->handoff
+
       expect(state.activePlayerIndex, 1);
       expect(state.phase, TurnPhase.draftFromPool);
 
@@ -60,592 +97,237 @@ void main() {
         engine,
         state,
         DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: rules,
       );
-      expect(state.activePlayer.hand.length, 1);
       expect(state.phase, TurnPhase.draftFromPool);
-
       state = _apply(
         engine,
         state,
         DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: rules,
       );
+
+      expect(state.phase, TurnPhase.attackStep);
       expect(state.activePlayer.hand.length, 2);
-      expect(state.phase, TurnPhase.mainActions);
     });
 
-    test('pool refills to 5 at turn start', () {
-      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
-      expect(state.pool.length, 5);
-
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-      );
-      expect(state.pool.length, 4);
-
-      state = _apply(engine, state, EndTurnMove());
-      expect(state.pool.length, 5);
-    });
-
-    test('end turn skips defender selection when opponent has no units', () {
-      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-      );
-
-      state = _apply(engine, state, EndTurnMove());
-
-      expect(state.activePlayerIndex, 1);
-      expect(state.phase, TurnPhase.draftFromPool);
-      expect(
-        state.eventLog.last,
-        contains('Turn 2: Shaman 2 drafts 2 from pool.'),
-      );
-    });
-
-    test('validate defenders allows turn end even with no selections', () {
+    test('can summon totem and bind spirit during main actions', () {
       const localRules = MatchRules(
+        poolSize: 5,
         firstPlayerOpeningDraft: 1,
         standardDraft: 1,
+        startingTotemsOnField: 1,
+        startingTotemsInHand: 3,
+        poolSeed: 77,
       );
+
       var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'flame_alpha',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'grove_wall',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      expect(state.phase, TurnPhase.chooseDefenders);
-
-      final active = state.activePlayer;
-      final units = List<UnitState>.from(active.units);
-      units[0] = units[0].copyWith(clearDefendingPieceIndex: true);
-      final players = List<PlayerState>.from(state.players);
-      players[state.activePlayerIndex] = active.copyWith(units: units);
-      state = state.copyWith(players: players);
-
-      final validated = engine.applyCommand(
-        state,
-        state.activePlayerIndex,
-        EndTurnMove(),
-        rules: localRules,
-      );
-
-      expect(validated.applied, isTrue, reason: validated.reason);
-      expect(validated.state.activePlayerIndex, 0);
-      expect(validated.state.phase, TurnPhase.draftFromPool);
-    });
-
-    test('play to new unit works', () {
-      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
       state = _apply(
         engine,
         state,
         DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        EndTurnMove(),
+        rules: localRules,
+      ); // to main
+
+      state = _apply(engine, state, SummonTotemMove(), rules: localRules);
+      expect(state.activePlayer.units.length, 2);
+      expect(state.activePlayer.totemsInHand, 2);
+
+      final unitId = state.activePlayer.units.first.unitId;
+      final spiritId = state.activePlayer.hand.first.instanceId;
+      state = _apply(
+        engine,
+        state,
+        AddToExistingUnitMove(handPieceId: spiritId, unitId: unitId),
+        rules: localRules,
       );
 
-      final pieceId = state.activePlayer.hand.first.instanceId;
-      state = _apply(engine, state, PlayToNewUnitMove(handPieceId: pieceId));
-
       expect(state.activePlayer.hand, isEmpty);
-      expect(state.activePlayer.units.length, 1);
       expect(state.activePlayer.units.first.pieces.length, 1);
     });
 
-    test('add to existing unit works', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 2,
-        standardDraft: 2,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
+    test('attack step cannot be ended while mandatory attacks remain', () {
+      final state = _stateWithAttackScenario(
+        catalog: catalog,
+        attacker: catalog[0],
+        defender: catalog[1],
+        defenderSelected: true,
       );
 
-      final firstPiece = state.activePlayer.hand[0].instanceId;
-      final secondPiece = state.activePlayer.hand[1].instanceId;
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(handPieceId: firstPiece),
-        rules: localRules,
-      );
-      final unitId = state.activePlayer.units.first.unitId;
-      state = _apply(
-        engine,
-        state,
-        AddToExistingUnitMove(handPieceId: secondPiece, unitId: unitId),
-        rules: localRules,
-      );
-
-      expect(state.activePlayer.units.first.pieces.length, 2);
-      expect(state.activePlayer.hand, isEmpty);
-    });
-
-    test('invalid add-to-enemy-unit fails', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 2,
-        standardDraft: 2,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      final p1Piece = state.activePlayer.hand.first.instanceId;
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(handPieceId: p1Piece),
-        rules: localRules,
-      );
-      final p1UnitId = state.activePlayer.units.first.unitId;
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      final p2Piece = state.activePlayer.hand.first.instanceId;
-
-      final result = engine.applyCommand(
+      final endResult = engine.applyCommand(
         state,
         state.activePlayerIndex,
-        AddToExistingUnitMove(handPieceId: p2Piece, unitId: p1UnitId),
-        rules: localRules,
+        EndTurnMove(),
       );
 
-      expect(result.applied, isFalse);
-      expect(result.reason, contains('target unit does not exist'));
+      expect(endResult.applied, isFalse);
+      expect(endResult.reason, contains('must attack'));
     });
 
-    test('attack selection per unit works', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 2,
-        standardDraft: 2,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final unitId = state.activePlayer.units.first.unitId;
-      state = _apply(
-        engine,
-        state,
-        AddToExistingUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-          unitId: unitId,
-        ),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        ChooseAttackerMove(unitId: unitId, pieceIndex: 1),
-        rules: localRules,
-      );
-      expect(state.activePlayer.units.first.attackingPieceIndex, 1);
-    });
-
-    test('combat destroys only when element+mode+power all win', () {
-      final attacker = catalog.first;
-      final defenderStrong = catalog[1];
-      final defenderModeTie = const PieceDefinition(
-        id: 'mode_tie',
-        name: 'Mode Tie',
-        element: SpiritElement.green,
-        attackMode: CombatMode.physical,
-        defenseMode: CombatMode.physical,
-        attack: 1,
-        defense: 2,
+    test('only totems with selected defenders can be targeted', () {
+      final state = _stateWithAttackScenario(
+        catalog: catalog,
+        attacker: catalog[0],
+        defender: catalog[1],
+        defenderSelected: false,
       );
 
-      final kill = engine.resolveAttack(
-        attacker: attacker,
-        defender: defenderStrong,
-      );
-      final noKill = engine.resolveAttack(
-        attacker: attacker,
-        defender: defenderModeTie,
-      );
-
-      expect(kill.destroyed, isTrue);
-      expect(noKill.destroyed, isFalse);
-    });
-
-    test('freshly summoned units cannot attack until the next turn', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 1,
-        standardDraft: 1,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'flame_alpha',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final attackerUnitId = state.activePlayer.units.first.unitId;
-      state = _apply(
-        engine,
-        state,
-        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
-
-      final deniedAttack = engine.applyCommand(
-        state,
-        state.activePlayerIndex,
-        AttackUnitMove(attackerUnitId: attackerUnitId),
-        rules: localRules,
-      );
-      expect(deniedAttack.applied, isFalse);
-      expect(deniedAttack.reason, contains('same turn it was summoned'));
-
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        AttackUnitMove(attackerUnitId: attackerUnitId),
-        rules: localRules,
-      );
-
-      expect(state.winnerIndex, isNull);
-      expect(state.players[1].health, 20);
-    });
-
-    test('unset defender remains unset through opponent turn', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 1,
-        standardDraft: 1,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-      state = _draftByDefinition(
-        engine,
-        state,
-        'flame_alpha',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final p1UnitId = state.activePlayer.units.first.unitId;
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _draftByDefinition(
-        engine,
-        state,
-        'grove_wall',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      expect(state.phase, TurnPhase.chooseDefenders);
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      expect(state.phase, TurnPhase.chooseDefenders);
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      expect(state.activePlayerIndex, 1);
-      expect(state.phase, TurnPhase.draftFromPool);
-      expect(state.players[0].units.first.defendingPieceIndex, isNull);
-      expect(state.players[0].units.first.unitId, p1UnitId);
-    });
-
-    test('only units with selected defenders can be targeted', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 1,
-        standardDraft: 1,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'flame_alpha',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final attackerUnitId = state.activePlayer.units.first.unitId;
-      state = _apply(
-        engine,
-        state,
-        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'grove_wall',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final defenderUnitId = state.activePlayer.units.first.unitId;
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      expect(state.phase, TurnPhase.chooseDefenders);
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
-      );
-
-      final deniedTarget = engine.applyCommand(
+      final attackResult = engine.applyCommand(
         state,
         state.activePlayerIndex,
         AttackUnitMove(
-          attackerUnitId: attackerUnitId,
-          targetUnitId: defenderUnitId,
+          attackerUnitId: state.activePlayer.units.first.unitId,
+          targetUnitId: state.opposingPlayer.units.first.unitId,
         ),
-        rules: localRules,
       );
-      expect(deniedTarget.applied, isFalse);
-      expect(deniedTarget.reason, contains('no defending spirit selected'));
+
+      expect(attackResult.applied, isFalse);
+      expect(attackResult.reason, contains('no defending spirit selected'));
+    });
+
+    test('direct attacks are not allowed in rule v1', () {
+      final state = _stateWithAttackScenario(
+        catalog: catalog,
+        attacker: catalog[0],
+        defender: catalog[1],
+        defenderSelected: true,
+      );
 
       final direct = engine.applyCommand(
         state,
         state.activePlayerIndex,
-        AttackUnitMove(attackerUnitId: attackerUnitId),
-        rules: localRules,
+        AttackUnitMove(attackerUnitId: state.activePlayer.units.first.unitId),
       );
-      expect(direct.applied, isTrue, reason: direct.reason);
-      expect(direct.state.players[1].health, 20);
+
+      expect(direct.applied, isFalse);
+      expect(direct.reason, contains('target an enemy totem'));
     });
 
-    test('win triggers when opponent has zero field pieces', () {
-      const localRules = MatchRules(
-        firstPlayerOpeningDraft: 1,
-        standardDraft: 1,
-      );
-      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'flame_alpha',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final attackerUnitId = state.activePlayer.units.first.unitId;
-      state = _apply(
-        engine,
-        state,
-        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-
-      state = _draftByDefinition(
-        engine,
-        state,
-        'grove_wall',
-        rules: localRules,
-      );
-      state = _apply(
-        engine,
-        state,
-        PlayToNewUnitMove(
-          handPieceId: state.activePlayer.hand.first.instanceId,
-        ),
-        rules: localRules,
-      );
-      final defenderUnitId = state.activePlayer.units.first.unitId;
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      expect(state.phase, TurnPhase.chooseDefenders);
-      state = _apply(
-        engine,
-        state,
-        ChooseDefenderMove(unitId: defenderUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
-      state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
-        rules: localRules,
+    test('combat destroys totem only when defender has no protection', () {
+      final attacker = catalog[0]; // red physical
+      final unprotected =
+          catalog[1]; // green magical (no color/mode protection)
+      final protectedByColor = catalog[2]; // blue protects vs red
+      final protectedByMode = const PieceDefinition(
+        id: 'mode_guard',
+        name: 'Mode Guard',
+        element: SpiritElement.green,
+        attackMode: CombatMode.magical,
+        defenseMode: CombatMode.physical,
+        attack: 1,
+        defense: 1,
       );
 
-      state = _apply(
+      final kill = engine.resolveAttack(
+        attacker: attacker,
+        defender: unprotected,
+      );
+      final colorSave = engine.resolveAttack(
+        attacker: attacker,
+        defender: protectedByColor,
+      );
+      final modeSave = engine.resolveAttack(
+        attacker: attacker,
+        defender: protectedByMode,
+      );
+
+      expect(kill.destroyed, isTrue);
+      expect(colorSave.destroyed, isFalse);
+      expect(modeSave.destroyed, isFalse);
+    });
+
+    test('player loses when all totems are gone (field + hand)', () {
+      final state = _stateWithAttackScenario(
+        catalog: catalog,
+        attacker: catalog[0],
+        defender: catalog[1],
+        defenderSelected: true,
+        attackerTotemsInHand: 0,
+        defenderTotemsInHand: 0,
+      );
+
+      final next = _apply(
         engine,
         state,
         AttackUnitMove(
-          attackerUnitId: attackerUnitId,
-          targetUnitId: defenderUnitId,
+          attackerUnitId: state.activePlayer.units.first.unitId,
+          targetUnitId: state.opposingPlayer.units.first.unitId,
         ),
-        rules: localRules,
       );
 
-      expect(state.winnerIndex, 0);
-      expect(state.phase, TurnPhase.gameOver);
+      expect(next.phase, TurnPhase.gameOver);
+      expect(next.winnerIndex, 0);
     });
   });
 }
 
-GameState _draftByDefinition(
-  TurnEngine engine,
-  GameState state,
-  String definitionId, {
-  MatchRules rules = const MatchRules(),
+GameState _stateWithAttackScenario({
+  required List<PieceDefinition> catalog,
+  required PieceDefinition attacker,
+  required PieceDefinition defender,
+  required bool defenderSelected,
+  int attackerTotemsInHand = 2,
+  int defenderTotemsInHand = 2,
 }) {
-  final piece = state.pool.firstWhere(
-    (entry) => entry.definition.id == definitionId,
+  const engine = TurnEngine();
+  const rules = MatchRules(
+    poolSize: 5,
+    firstPlayerOpeningDraft: 1,
+    standardDraft: 2,
+    startingTotemsOnField: 1,
+    startingTotemsInHand: 3,
+    poolSeed: 987,
   );
-  return _apply(
-    engine,
-    state,
-    DraftFromPoolMove(poolPieceId: piece.instanceId),
-    rules: rules,
+
+  var state = engine.newMatch(draftCatalog: catalog, rules: rules);
+
+  final attackerUnit = state.players[0].units.first.copyWith(
+    pieces: <PieceInstance>[
+      PieceInstance(instanceId: 'atk-1', ownerIndex: 0, definition: attacker),
+    ],
+    attackingPieceIndex: 0,
+    defendingPieceIndex: 0,
+    attackedThisTurn: false,
+    summonedTurn: 1,
   );
+
+  final defenderUnit = state.players[1].units.first.copyWith(
+    pieces: <PieceInstance>[
+      PieceInstance(instanceId: 'def-1', ownerIndex: 1, definition: defender),
+    ],
+    attackingPieceIndex: 0,
+    defendingPieceIndex: defenderSelected ? 0 : null,
+    attackedThisTurn: false,
+    summonedTurn: 1,
+  );
+
+  final p1 = state.players[0].copyWith(
+    totemsInHand: attackerTotemsInHand,
+    hand: const <PieceInstance>[],
+    units: <UnitState>[attackerUnit],
+  );
+  final p2 = state.players[1].copyWith(
+    totemsInHand: defenderTotemsInHand,
+    hand: const <PieceInstance>[],
+    units: <UnitState>[defenderUnit],
+  );
+
+  state = state.copyWith(
+    turnNumber: 2,
+    activePlayerIndex: 0,
+    phase: TurnPhase.attackStep,
+    players: <PlayerState>[p1, p2],
+    clearPendingCombat: true,
+    clearWinnerIndex: true,
+  );
+
+  return state;
 }
 
 GameState _apply(

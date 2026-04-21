@@ -38,6 +38,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   final GlobalKey _newUnitDropKey = GlobalKey();
   final GlobalKey _playerHandDropKey = GlobalKey();
   final GlobalKey _opponentShamanKey = GlobalKey();
+  final GlobalKey _playerShamanKey = GlobalKey();
   final Map<String, GlobalKey> _unitDropKeys = <String, GlobalKey>{};
   final Map<String, GlobalKey> _opponentUnitKeys = <String, GlobalKey>{};
   final BattleController _controller = BattleController();
@@ -191,10 +192,15 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
           break;
         }
         final applied = next is AttackUnitMove
-            ? _performResolvedAttack(next, animate: false, scheduleAi: false)
+            ? _performResolvedAttack(next, animate: true, scheduleAi: false)
             : _dispatch(next, scheduleAi: false);
         if (!applied) {
           break;
+        }
+        if (next is AttackUnitMove) {
+          await _waitForAttackAnimationComplete();
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          continue;
         }
         await Future<void>.delayed(const Duration(milliseconds: 230));
       }
@@ -219,7 +225,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
               final selectedAttackerUnitId = view.selectedAttackerUnitId;
               final canDirectAttack =
                   selectedAttackerUnitId != null &&
-                  view.isMainPhase &&
+                  view.isAttackPhase &&
                   _controller
                       .canApply(BattleIntents.attack(selectedAttackerUnitId))
                       .allowed;
@@ -391,9 +397,10 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                 runSpacing: 4,
                 children: <Widget>[
                   Text(player.id),
-                  Text('HP ${player.health}'),
-                  Text('Hand ${player.hand.length}'),
-                  Text('Units ${player.units.length}'),
+                  Text('Totems ${player.units.length + player.totemsInHand}'),
+                  Text('Field ${player.units.length}'),
+                  Text('In Hand ${player.totemsInHand}'),
+                  Text('Spirits ${player.hand.length}'),
                   if (isActive) const Chip(label: Text('Active')),
                 ],
               ),
@@ -425,7 +432,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                 final unit = view.opposingPlayer.units[index];
                 final canTarget =
                     selectedAttackerUnitId != null &&
-                    view.isMainPhase &&
+                    view.isAttackPhase &&
                     _controller
                         .canApply(
                           BattleIntents.attack(
@@ -524,7 +531,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                       unit: unit,
                       selectedUnitId: view.selectedAttackerUnitId,
                       outgoingReady:
-                          view.isMainPhase &&
+                          view.isAttackPhase &&
                           _canUnitAttackThisTurn(
                             unit,
                             view.gameState.turnNumber,
@@ -537,6 +544,9 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                               pieceIndex,
                             ),
                           );
+                          return;
+                        }
+                        if (!view.isAttackPhase) {
                           return;
                         }
                         final picked = _dispatch(
@@ -563,53 +573,81 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
 
   Widget _buildPlayerShamanBand(BattleViewState view) {
     final player = view.activePlayer;
-    return _BandFrame(
-      title: 'Player Shaman',
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: <Widget>[
-                CircleAvatar(
-                  radius: 16,
-                  child: Text(player.id.substring(player.id.length - 1)),
-                ),
-                Text(player.id),
-                Text('HP ${player.health}'),
-                Text('Hand ${player.hand.length}'),
-                Text('Units ${player.units.length}'),
-                if (view.gameState.activePlayerIndex == 0)
-                  const Chip(label: Text('Active')),
-              ],
+    return Container(
+      key: _playerShamanKey,
+      child: _BandFrame(
+        title: 'Player Shaman',
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: <Widget>[
+                  CircleAvatar(
+                    radius: 16,
+                    child: Text(player.id.substring(player.id.length - 1)),
+                  ),
+                  Text(player.id),
+                  Text('Totems ${player.units.length + player.totemsInHand}'),
+                  Text('Field ${player.units.length}'),
+                  Text('In Hand ${player.totemsInHand}'),
+                  Text('Hand ${player.hand.length}'),
+                  Text(
+                    'Spirits ${player.units.fold<int>(0, (s, u) => s + u.pieces.length)}',
+                  ),
+                  if (view.gameState.activePlayerIndex == 0)
+                    const Chip(label: Text('Active')),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          if (view.isMainPhase)
-            FilledButton(
-              onPressed: () => _dispatch(BattleIntents.endTurn()),
-              child: const Text('End Turn'),
-            ),
-          if (view.isChooseDefendersPhase)
-            FilledButton(
-              onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
-                  ? () => _dispatch(BattleIntents.endTurn())
-                  : null,
-              child: const Text('Validate Defenders'),
-            ),
-          if (view.isDraftPhase)
+            const SizedBox(width: 8),
+            if (view.isAttackPhase)
+              FilledButton(
+                onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
+                    ? () => _dispatch(BattleIntents.endTurn())
+                    : null,
+                child: const Text('Finish Attacks'),
+              ),
+            if (view.isMainPhase)
+              Wrap(
+                spacing: 8,
+                children: <Widget>[
+                  FilledButton.tonal(
+                    onPressed:
+                        _controller
+                            .canApply(BattleIntents.summonTotem())
+                            .allowed
+                        ? () => _dispatch(BattleIntents.summonTotem())
+                        : null,
+                    child: const Text('Summon Totem'),
+                  ),
+                  FilledButton(
+                    onPressed: () => _dispatch(BattleIntents.endTurn()),
+                    child: const Text('End Turn'),
+                  ),
+                ],
+              ),
+            if (view.isChooseDefendersPhase)
+              FilledButton(
+                onPressed: _controller.canApply(BattleIntents.endTurn()).allowed
+                    ? () => _dispatch(BattleIntents.endTurn())
+                    : null,
+                child: const Text('Validate Defenders'),
+              ),
+            if (view.isDraftPhase)
+              FilledButton.tonal(
+                onPressed: null,
+                child: const Text('Drafting...'),
+              ),
+            const SizedBox(width: 8),
             FilledButton.tonal(
-              onPressed: null,
-              child: const Text('Drafting...'),
+              onPressed: _resetMatch,
+              child: const Text('New Match'),
             ),
-          const SizedBox(width: 8),
-          FilledButton.tonal(
-            onPressed: _resetMatch,
-            child: const Text('New Match'),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1027,12 +1065,22 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   }
 
   _AttackVisual? _buildAttackVisualSnapshot(AttackUnitMove command) {
+    final state = _view.gameState;
+    final attackerIsPlayer = state.activePlayerIndex == 0;
     final fromRect = _targetResolver.rectForKey(
-      _unitDropKey(command.attackerUnitId),
+      attackerIsPlayer
+          ? _unitDropKey(command.attackerUnitId)
+          : _opponentUnitKey(command.attackerUnitId),
     );
     final toRect = command.targetUnitId == null
-        ? _targetResolver.rectForKey(_opponentShamanKey)
-        : _targetResolver.rectForKey(_opponentUnitKey(command.targetUnitId!));
+        ? _targetResolver.rectForKey(
+            attackerIsPlayer ? _opponentShamanKey : _playerShamanKey,
+          )
+        : _targetResolver.rectForKey(
+            attackerIsPlayer
+                ? _opponentUnitKey(command.targetUnitId!)
+                : _unitDropKey(command.targetUnitId!),
+          );
     final layerContext = _interactionLayerKey.currentContext;
     if (fromRect == null || toRect == null || layerContext == null) {
       return null;
@@ -1041,7 +1089,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     if (render is! RenderBox || !render.hasSize) {
       return null;
     }
-    final activeUnits = _view.gameState.activePlayer.units;
+    final activeUnits = state.activePlayer.units;
     if (activeUnits.isEmpty) {
       return null;
     }
@@ -1070,6 +1118,15 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
       ..stop()
       ..value = 0
       ..forward();
+  }
+
+  Future<void> _waitForAttackAnimationComplete() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (mounted &&
+        _attackVisual != null &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
   }
 
   Color _elementColor(SpiritElement element) {

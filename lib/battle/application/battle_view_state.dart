@@ -47,6 +47,8 @@ class BattleViewState {
 
   bool get isDraftPhase => gameState.phase == TurnPhase.draftFromPool;
 
+  bool get isAttackPhase => gameState.phase == TurnPhase.attackStep;
+
   bool get isMainPhase => gameState.phase == TurnPhase.mainActions;
 
   bool get isChooseDefendersPhase =>

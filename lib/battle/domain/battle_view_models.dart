@@ -6,6 +6,8 @@ String phaseLabel(TurnPhase phase) {
       return 'Start';
     case TurnPhase.draftFromPool:
       return 'Draft';
+    case TurnPhase.attackStep:
+      return 'Attack';
     case TurnPhase.mainActions:
       return 'Main';
     case TurnPhase.resolveCombat:

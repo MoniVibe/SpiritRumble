@@ -5,6 +5,7 @@ enum CombatMode { physical, magical }
 enum TurnPhase {
   startTurn,
   draftFromPool,
+  attackStep,
   mainActions,
   resolveCombat,
   chooseDefenders,
@@ -106,6 +107,7 @@ class PlayerState {
   const PlayerState({
     required this.id,
     required this.health,
+    required this.totemsInHand,
     required this.hand,
     required this.units,
     required this.turnsTaken,
@@ -115,6 +117,7 @@ class PlayerState {
 
   final String id;
   final int health;
+  final int totemsInHand;
   final List<PieceInstance> hand;
   final List<UnitState> units;
   final int turnsTaken;
@@ -124,6 +127,7 @@ class PlayerState {
   PlayerState copyWith({
     String? id,
     int? health,
+    int? totemsInHand,
     List<PieceInstance>? hand,
     List<UnitState>? units,
     int? turnsTaken,
@@ -133,6 +137,7 @@ class PlayerState {
     return PlayerState(
       id: id ?? this.id,
       health: health ?? this.health,
+      totemsInHand: totemsInHand ?? this.totemsInHand,
       hand: hand ?? this.hand,
       units: units ?? this.units,
       turnsTaken: turnsTaken ?? this.turnsTaken,
@@ -196,12 +201,18 @@ class MatchRules {
     this.poolSize = 5,
     this.firstPlayerOpeningDraft = 1,
     this.standardDraft = 2,
+    this.startingTotemsOnField = 1,
+    this.startingTotemsInHand = 3,
+    this.poolSeed = 1337,
   });
 
   final int startingHealth;
   final int poolSize;
   final int firstPlayerOpeningDraft;
   final int standardDraft;
+  final int startingTotemsOnField;
+  final int startingTotemsInHand;
+  final int poolSeed;
 }
 
 class CommandCheck {
@@ -243,6 +254,16 @@ class PlayToNewUnitMove extends GameCommand {
 
   @override
   String summary() => 'play hand piece $handPieceId to new unit';
+}
+
+class SummonTotemMove extends GameCommand {
+  SummonTotemMove();
+
+  @override
+  String get type => 'summon_totem';
+
+  @override
+  String summary() => 'summon totem from hand';
 }
 
 class AddToExistingUnitMove extends GameCommand {

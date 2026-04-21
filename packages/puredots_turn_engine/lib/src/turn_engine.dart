@@ -35,51 +35,65 @@ class TurnEngine {
       );
     }
 
+    var nextUnitId = 1;
+
+    List<UnitState> startingTotemsFor(int ownerIndex) {
+      final units = <UnitState>[];
+      for (var i = 0; i < rules.startingTotemsOnField; i++) {
+        units.add(
+          UnitState(
+            unitId: 'u$nextUnitId',
+            ownerIndex: ownerIndex,
+            pieces: const <PieceInstance>[],
+            summonedTurn: 0,
+            attackingPieceIndex: null,
+            defendingPieceIndex: null,
+            attackedThisTurn: false,
+          ),
+        );
+        nextUnitId++;
+      }
+      return units;
+    }
+
     var state = GameState(
       turnNumber: 1,
       activePlayerIndex: 0,
       phase: TurnPhase.startTurn,
-      players: const <PlayerState>[
+      players: <PlayerState>[
         PlayerState(
           id: 'Shaman 1',
-          health: 24,
-          hand: <PieceInstance>[],
-          units: <UnitState>[],
+          health: rules.startingHealth,
+          totemsInHand: rules.startingTotemsInHand,
+          hand: const <PieceInstance>[],
+          units: startingTotemsFor(0),
           turnsTaken: 0,
           poolPicksThisTurn: 0,
-          hadUnitsEver: false,
+          hadUnitsEver: rules.startingTotemsOnField > 0,
         ),
         PlayerState(
           id: 'Shaman 2',
-          health: 24,
-          hand: <PieceInstance>[],
-          units: <UnitState>[],
+          health: rules.startingHealth,
+          totemsInHand: rules.startingTotemsInHand,
+          hand: const <PieceInstance>[],
+          units: startingTotemsFor(1),
           turnsTaken: 0,
           poolPicksThisTurn: 0,
-          hadUnitsEver: false,
+          hadUnitsEver: rules.startingTotemsOnField > 0,
         ),
       ],
       pool: const <PieceInstance>[],
       draftCatalog: List<PieceDefinition>.from(draftCatalog),
-      catalogCursor: 0,
+      catalogCursor: rules.poolSeed,
       pendingCombat: null,
       winnerIndex: null,
       nextPieceInstanceId: 1,
-      nextUnitId: 1,
+      nextUnitId: nextUnitId,
       history: const <CommandLogEntry>[],
       eventLog: const <String>['Match created'],
     );
 
-    state = _replacePlayer(
-      state,
-      0,
-      state.players[0].copyWith(health: rules.startingHealth),
-    );
-    state = _replacePlayer(
-      state,
-      1,
-      state.players[1].copyWith(health: rules.startingHealth),
-    );
+    state = _refreshPool(state, rules: rules);
     return _beginTurn(state, rules: rules);
   }
 
@@ -99,6 +113,8 @@ class TurnEngine {
     switch (command) {
       case DraftFromPoolMove _:
         return _canApplyDraftFromPool(state, command, rules: rules);
+      case SummonTotemMove _:
+        return _canApplySummonTotem(state);
       case PlayToNewUnitMove _:
         return _canApplyPlayToNewUnit(state, command);
       case AddToExistingUnitMove _:
@@ -135,6 +151,8 @@ class TurnEngine {
     switch (command) {
       case DraftFromPoolMove _:
         next = _applyDraftFromPool(next, command, rules: rules);
+      case SummonTotemMove _:
+        next = _applySummonTotem(next);
       case PlayToNewUnitMove _:
         next = _applyPlayToNewUnit(next, command);
       case AddToExistingUnitMove _:
@@ -157,21 +175,24 @@ class TurnEngine {
     required PieceDefinition attacker,
     required PieceDefinition defender,
   }) {
-    final elementAdvantage = _hasElementAdvantage(
-      attacker.element,
-      defender.element,
+    final defenderColorProtected = _isColorProtected(
+      defenderElement: defender.element,
+      attackerElement: attacker.element,
     );
-    final modeAdvantage = _hasModeAdvantage(
-      attacker.attackMode,
-      defender.defenseMode,
+    final defenderModeProtected = _isModeProtected(
+      defenderDefenseMode: defender.defenseMode,
+      attackerAttackMode: attacker.attackMode,
     );
-    final powerAdvantage = attacker.attack >= defender.defense;
-    final destroyed = elementAdvantage && modeAdvantage && powerAdvantage;
+
+    final elementAdvantage = !defenderColorProtected;
+    final modeAdvantage = !defenderModeProtected;
+    final powerAdvantage = true;
+    final destroyed = elementAdvantage && modeAdvantage;
 
     final reason =
-        'element=${elementAdvantage ? 'win' : 'lose'}, '
-        'mode=${modeAdvantage ? 'win' : 'lose'}, '
-        'power=${powerAdvantage ? 'win' : 'lose'}';
+        'defenderColorProtected=${defenderColorProtected ? 'yes' : 'no'}, '
+        'defenderModeProtected=${defenderModeProtected ? 'yes' : 'no'}';
+
     return CombatResult(
       attackerPieceId: attacker.id,
       defenderPieceId: defender.id,
@@ -192,13 +213,23 @@ class TurnEngine {
       return const CommandCheck.denied('not in draft phase');
     }
     if (_findPoolIndex(state, command.poolPieceId) == -1) {
-      return const CommandCheck.denied('requested piece is not in pool');
+      return const CommandCheck.denied('requested spirit is not in pool');
     }
     final requiredPicks = _requiredDraftPicks(state, rules: rules);
     if (state.activePlayer.poolPicksThisTurn >= requiredPicks) {
       return const CommandCheck.denied(
         'draft picks for this turn are complete',
       );
+    }
+    return const CommandCheck.allowed();
+  }
+
+  CommandCheck _canApplySummonTotem(GameState state) {
+    if (state.phase != TurnPhase.mainActions) {
+      return const CommandCheck.denied('not in main actions phase');
+    }
+    if (state.activePlayer.totemsInHand <= 0) {
+      return const CommandCheck.denied('no totems left in hand');
     }
     return const CommandCheck.allowed();
   }
@@ -211,7 +242,10 @@ class TurnEngine {
       return const CommandCheck.denied('not in main actions phase');
     }
     if (_findHandIndex(state.activePlayer, command.handPieceId) == -1) {
-      return const CommandCheck.denied('piece is not in hand');
+      return const CommandCheck.denied('spirit is not in hand');
+    }
+    if (state.activePlayer.totemsInHand <= 0) {
+      return const CommandCheck.denied('no totems left in hand');
     }
     return const CommandCheck.allowed();
   }
@@ -224,11 +258,11 @@ class TurnEngine {
       return const CommandCheck.denied('not in main actions phase');
     }
     if (_findHandIndex(state.activePlayer, command.handPieceId) == -1) {
-      return const CommandCheck.denied('piece is not in hand');
+      return const CommandCheck.denied('spirit is not in hand');
     }
     final unitIndex = _findUnitIndex(state.activePlayer, command.unitId);
     if (unitIndex == -1) {
-      return const CommandCheck.denied('target unit does not exist');
+      return const CommandCheck.denied('target totem does not exist');
     }
     return const CommandCheck.allowed();
   }
@@ -237,12 +271,12 @@ class TurnEngine {
     GameState state,
     ChooseAttackerMove command,
   ) {
-    if (state.phase != TurnPhase.mainActions) {
-      return const CommandCheck.denied('not in main actions phase');
+    if (state.phase != TurnPhase.attackStep) {
+      return const CommandCheck.denied('not in attack step');
     }
     final unitIndex = _findUnitIndex(state.activePlayer, command.unitId);
     if (unitIndex == -1) {
-      return const CommandCheck.denied('unit not found');
+      return const CommandCheck.denied('totem not found');
     }
     final unit = state.activePlayer.units[unitIndex];
     if (command.pieceIndex < 0 || command.pieceIndex >= unit.pieces.length) {
@@ -252,39 +286,29 @@ class TurnEngine {
   }
 
   CommandCheck _canApplyAttackUnit(GameState state, AttackUnitMove command) {
-    if (state.phase != TurnPhase.mainActions) {
-      return const CommandCheck.denied('not in main actions phase');
+    if (state.phase != TurnPhase.attackStep) {
+      return const CommandCheck.denied('not in attack step');
     }
+
     final attackerUnitIndex = _findUnitIndex(
       state.activePlayer,
       command.attackerUnitId,
     );
     if (attackerUnitIndex == -1) {
-      return const CommandCheck.denied('attacker unit not found');
+      return const CommandCheck.denied('attacking totem not found');
     }
+
     final attackerUnit = state.activePlayer.units[attackerUnitIndex];
-    if (attackerUnit.summonedTurn == state.turnNumber) {
-      return const CommandCheck.denied(
-        'unit cannot attack on the same turn it was summoned',
-      );
+    if (!_canUnitAttackThisStep(attackerUnit, turnNumber: state.turnNumber)) {
+      return const CommandCheck.denied('selected totem cannot attack now');
     }
-    if (attackerUnit.attackedThisTurn) {
-      return const CommandCheck.denied('unit already attacked this turn');
-    }
+
     if (attackerUnit.attackingPieceIndex == null) {
-      return const CommandCheck.denied('attacking piece has not been chosen');
-    }
-    if (attackerUnit.attackingPieceIndex! >= attackerUnit.pieces.length) {
-      return const CommandCheck.denied('attacking piece index out of range');
+      return const CommandCheck.denied('attacking spirit has not been chosen');
     }
 
     if (command.targetUnitId == null) {
-      if (_hasAnyTargetableDefendingUnits(state.opposingPlayer)) {
-        return const CommandCheck.denied(
-          'direct shaman attacks are allowed only when no defending spirits remain',
-        );
-      }
-      return const CommandCheck.allowed();
+      return const CommandCheck.denied('attacks must target an enemy totem');
     }
 
     final targetIndex = _findUnitIndex(
@@ -292,14 +316,16 @@ class TurnEngine {
       command.targetUnitId!,
     );
     if (targetIndex == -1) {
-      return const CommandCheck.denied('target unit not found');
+      return const CommandCheck.denied('target totem not found');
     }
+
     final targetUnit = state.opposingPlayer.units[targetIndex];
     if (!_hasValidDefendingPiece(targetUnit)) {
       return const CommandCheck.denied(
-        'target unit has no defending spirit selected',
+        'target totem has no defending spirit selected',
       );
     }
+
     return const CommandCheck.allowed();
   }
 
@@ -312,9 +338,14 @@ class TurnEngine {
     }
     final unitIndex = _findUnitIndex(state.activePlayer, command.unitId);
     if (unitIndex == -1) {
-      return const CommandCheck.denied('unit not found');
+      return const CommandCheck.denied('totem not found');
     }
     final unit = state.activePlayer.units[unitIndex];
+    if (unit.pieces.isEmpty) {
+      return const CommandCheck.denied(
+        'cannot choose defender for empty totem',
+      );
+    }
     if (command.pieceIndex < 0 || command.pieceIndex >= unit.pieces.length) {
       return const CommandCheck.denied('defender index out of range');
     }
@@ -322,6 +353,14 @@ class TurnEngine {
   }
 
   CommandCheck _canApplyEndTurn(GameState state) {
+    if (state.phase == TurnPhase.attackStep) {
+      if (_hasPendingMandatoryAttacks(state)) {
+        return const CommandCheck.denied(
+          'all attack-ready totems must attack before ending attack step',
+        );
+      }
+      return const CommandCheck.allowed();
+    }
     if (state.phase == TurnPhase.mainActions) {
       return const CommandCheck.allowed();
     }
@@ -329,7 +368,7 @@ class TurnEngine {
       return const CommandCheck.allowed();
     }
     return const CommandCheck.denied(
-      'end turn is only valid in main actions or choose defenders',
+      'end turn is only valid in attack, main, or defender phases',
     );
   }
 
@@ -364,10 +403,39 @@ class TurnEngine {
 
     final requiredPicks = _requiredDraftPicks(next, rules: rules);
     if (next.activePlayer.poolPicksThisTurn >= requiredPicks) {
-      next = next.copyWith(phase: TurnPhase.mainActions);
-      next = _appendEvent(next, '${active.id} completed drafting.');
+      next = next.copyWith(phase: TurnPhase.attackStep);
+      next = _appendEvent(next, '${active.id} entered attack step.');
     }
     return next;
+  }
+
+  GameState _applySummonTotem(GameState state) {
+    final active = state.activePlayer;
+    final units = List<UnitState>.from(active.units)
+      ..add(
+        UnitState(
+          unitId: 'u${state.nextUnitId}',
+          ownerIndex: state.activePlayerIndex,
+          pieces: const <PieceInstance>[],
+          summonedTurn: state.turnNumber,
+          attackingPieceIndex: null,
+          defendingPieceIndex: null,
+          attackedThisTurn: false,
+        ),
+      );
+
+    var next = state.copyWith(nextUnitId: state.nextUnitId + 1);
+    next = _replacePlayer(
+      next,
+      state.activePlayerIndex,
+      active.copyWith(
+        totemsInHand: active.totemsInHand - 1,
+        units: units,
+        hadUnitsEver: true,
+      ),
+    );
+
+    return _appendEvent(next, '${active.id} summoned a totem to the field.');
   }
 
   GameState _applyPlayToNewUnit(GameState state, PlayToNewUnitMove command) {
@@ -379,6 +447,7 @@ class TurnEngine {
     final piece = hand
         .removeAt(handIndex)
         .copyWith(ownerIndex: state.activePlayerIndex);
+
     final units = List<UnitState>.from(active.units)
       ..add(
         UnitState(
@@ -396,11 +465,17 @@ class TurnEngine {
     next = _replacePlayer(
       next,
       state.activePlayerIndex,
-      active.copyWith(hand: hand, units: units, hadUnitsEver: true),
+      active.copyWith(
+        hand: hand,
+        units: units,
+        totemsInHand: active.totemsInHand - 1,
+        hadUnitsEver: true,
+      ),
     );
+
     return _appendEvent(
       next,
-      '${active.id} played ${piece.definition.name} to a new unit.',
+      '${active.id} summoned a totem and bound ${piece.definition.name}.',
     );
   }
 
@@ -421,16 +496,21 @@ class TurnEngine {
     final units = List<UnitState>.from(active.units);
     final unit = units[unitIndex];
     final pieces = List<PieceInstance>.from(unit.pieces)..add(piece);
-    units[unitIndex] = unit.copyWith(pieces: pieces);
+
+    units[unitIndex] = unit.copyWith(
+      pieces: pieces,
+      attackingPieceIndex: unit.attackingPieceIndex ?? 0,
+    );
 
     var next = _replacePlayer(
       state,
       state.activePlayerIndex,
       active.copyWith(hand: hand, units: units),
     );
+
     return _appendEvent(
       next,
-      '${active.id} added ${piece.definition.name} to unit ${unit.unitId}.',
+      '${active.id} bound ${piece.definition.name} to ${unit.unitId}.',
     );
   }
 
@@ -441,6 +521,7 @@ class TurnEngine {
     units[unitIndex] = units[unitIndex].copyWith(
       attackingPieceIndex: command.pieceIndex,
     );
+
     final next = _replacePlayer(
       state,
       state.activePlayerIndex,
@@ -448,7 +529,7 @@ class TurnEngine {
     );
     return _appendEvent(
       next,
-      '${active.id} selected attacker piece ${command.pieceIndex} in ${command.unitId}.',
+      '${active.id} selected attacker spirit ${command.pieceIndex} in ${command.unitId}.',
     );
   }
 
@@ -481,6 +562,7 @@ class TurnEngine {
     units[unitIndex] = units[unitIndex].copyWith(
       defendingPieceIndex: command.pieceIndex,
     );
+
     var next = _replacePlayer(
       state,
       state.activePlayerIndex,
@@ -488,12 +570,30 @@ class TurnEngine {
     );
     next = _appendEvent(
       next,
-      '${active.id} set defender piece ${command.pieceIndex} for ${command.unitId}.',
+      '${active.id} set defender spirit ${command.pieceIndex} for ${command.unitId}.',
     );
     return next;
   }
 
   GameState _applyEndTurn(GameState state, {required MatchRules rules}) {
+    if (state.phase == TurnPhase.attackStep) {
+      var next = state.copyWith(phase: TurnPhase.mainActions);
+      next = _appendEvent(
+        next,
+        '${state.activePlayer.id} completed attack step.',
+      );
+      return next;
+    }
+
+    if (state.phase == TurnPhase.mainActions) {
+      var next = state.copyWith(phase: TurnPhase.chooseDefenders);
+      next = _appendEvent(
+        next,
+        '${state.activePlayer.id} entered defender selection.',
+      );
+      return next;
+    }
+
     if (state.phase == TurnPhase.chooseDefenders) {
       var next = _appendEvent(
         state,
@@ -502,25 +602,13 @@ class TurnEngine {
       return _handoffTurn(next, rules: rules);
     }
 
-    if (!_requiresDefenderSelection(state)) {
-      var next = _appendEvent(
-        state,
-        '${state.activePlayer.id} skipped defender selection (no incoming threats).',
-      );
-      return _handoffTurn(next, rules: rules);
-    }
-
-    var next = state.copyWith(phase: TurnPhase.chooseDefenders);
-    next = _appendEvent(
-      next,
-      '${state.activePlayer.id} entered defender selection.',
-    );
-    return next;
+    return state;
   }
 
   GameState _handoffTurn(GameState state, {required MatchRules rules}) {
     final outgoingIndex = state.activePlayerIndex;
     final outgoing = state.players[outgoingIndex];
+
     var next = _replacePlayer(
       state,
       outgoingIndex,
@@ -533,6 +621,8 @@ class TurnEngine {
       phase: TurnPhase.startTurn,
       clearPendingCombat: true,
     );
+
+    next = _refreshPool(next, rules: rules);
     return _beginTurn(next, rules: rules);
   }
 
@@ -540,8 +630,7 @@ class TurnEngine {
     final activeIndex = state.activePlayerIndex;
     final active = state.activePlayer;
 
-    var units = List<UnitState>.from(active.units);
-    units = units
+    final units = List<UnitState>.from(active.units)
         .map(
           (unit) => unit.copyWith(
             attackedThisTurn: false,
@@ -555,7 +644,7 @@ class TurnEngine {
       activeIndex,
       active.copyWith(poolPicksThisTurn: 0, units: units),
     );
-    next = _refillPool(next, rules: rules);
+
     next = next.copyWith(phase: TurnPhase.draftFromPool);
     return _appendEvent(
       next,
@@ -563,13 +652,18 @@ class TurnEngine {
     );
   }
 
-  GameState _refillPool(GameState state, {required MatchRules rules}) {
-    var pool = List<PieceInstance>.from(state.pool);
-    var cursor = state.catalogCursor;
-    var nextPieceId = state.nextPieceInstanceId;
+  GameState _refreshPool(GameState state, {required MatchRules rules}) {
+    if (state.draftCatalog.isEmpty) {
+      return state;
+    }
 
-    while (pool.length < rules.poolSize) {
-      final definition = state.draftCatalog[cursor % state.draftCatalog.length];
+    var rng = state.catalogCursor;
+    var nextPieceId = state.nextPieceInstanceId;
+    final pool = <PieceInstance>[];
+
+    for (var i = 0; i < rules.poolSize; i++) {
+      rng = _nextRng(rng);
+      final definition = state.draftCatalog[rng % state.draftCatalog.length];
       pool.add(
         PieceInstance(
           instanceId: 'p$nextPieceId',
@@ -577,13 +671,12 @@ class TurnEngine {
           definition: definition,
         ),
       );
-      cursor++;
       nextPieceId++;
     }
 
     return state.copyWith(
       pool: pool,
-      catalogCursor: cursor,
+      catalogCursor: rng,
       nextPieceInstanceId: nextPieceId,
     );
   }
@@ -591,7 +684,7 @@ class TurnEngine {
   GameState _resolvePendingCombat(GameState state) {
     final pending = state.pendingCombat;
     if (pending == null) {
-      return state.copyWith(phase: TurnPhase.mainActions);
+      return state.copyWith(phase: TurnPhase.attackStep);
     }
 
     final attackerPlayerIndex = pending.attackerPlayerIndex;
@@ -606,37 +699,30 @@ class TurnEngine {
     );
     if (attackerUnitIndex == -1) {
       return _appendEvent(
-        state.copyWith(phase: TurnPhase.mainActions, clearPendingCombat: true),
-        'Attack fizzled: attacker unit disappeared.',
+        state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
+        'Attack fizzled: attacker totem disappeared.',
       );
     }
-    final attackerUnit = attackerPlayer.units[attackerUnitIndex];
-    final attackerPiece = attackerUnit.pieces[pending.attackerPieceIndex];
 
-    var next = state;
+    final attackerUnit = attackerPlayer.units[attackerUnitIndex];
+    final attackerIndex =
+        (pending.attackerPieceIndex >= 0 &&
+            pending.attackerPieceIndex < attackerUnit.pieces.length)
+        ? pending.attackerPieceIndex
+        : 0;
+    if (attackerUnit.pieces.isEmpty) {
+      return _appendEvent(
+        state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
+        'Attack fizzled: attacker has no bound spirits.',
+      );
+    }
+
+    final attackerPiece = attackerUnit.pieces[attackerIndex];
+
     if (pending.targetUnitId == null) {
-      final nextHealth =
-          (defenderPlayer.health - attackerPiece.definition.attack).clamp(
-            0,
-            1 << 30,
-          );
-      next = _replacePlayer(
-        next,
-        defenderPlayerIndex,
-        defenderPlayer.copyWith(health: nextHealth),
-      );
-      next = _markUnitAsAttacked(
-        next,
-        ownerIndex: attackerPlayerIndex,
-        unitId: attackerUnit.unitId,
-      );
-      next = _appendEvent(
-        next,
-        '${attackerPiece.definition.name} hit ${defenderPlayer.id} directly for ${attackerPiece.definition.attack}.',
-      );
-      return _finishCombatAndCheckWinner(
-        next,
-        attackerPlayerIndex: attackerPlayerIndex,
+      return _appendEvent(
+        state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
+        'Attack fizzled: no enemy totem target selected.',
       );
     }
 
@@ -646,39 +732,41 @@ class TurnEngine {
     );
     if (defenderUnitIndex == -1) {
       return _appendEvent(
-        state.copyWith(phase: TurnPhase.mainActions, clearPendingCombat: true),
-        'Attack fizzled: target unit disappeared.',
+        state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
+        'Attack fizzled: target totem disappeared.',
       );
     }
+
     final defenderUnit = defenderPlayer.units[defenderUnitIndex];
     if (!_hasValidDefendingPiece(defenderUnit)) {
       return _appendEvent(
-        state.copyWith(phase: TurnPhase.mainActions, clearPendingCombat: true),
+        state.copyWith(phase: TurnPhase.attackStep, clearPendingCombat: true),
         'Attack fizzled: target has no defending spirit selected.',
       );
     }
-    final defenderPieceIndex = defenderUnit.defendingPieceIndex!;
-    final defenderPiece = defenderUnit.pieces[defenderPieceIndex];
 
+    final defenderPiece =
+        defenderUnit.pieces[defenderUnit.defendingPieceIndex!];
     final result = resolveAttack(
       attacker: attackerPiece.definition,
       defender: defenderPiece.definition,
     );
+
+    var next = state;
     if (result.destroyed) {
-      next = _removePieceFromUnit(
+      next = _removeUnit(
         next,
         ownerIndex: defenderPlayerIndex,
         unitId: defenderUnit.unitId,
-        pieceIndex: defenderPieceIndex,
       );
       next = _appendEvent(
         next,
-        '${attackerPiece.definition.name} destroyed ${defenderPiece.definition.name} (${result.reason}).',
+        '${attackerPiece.definition.name} destroyed totem ${defenderUnit.unitId} (${result.reason}).',
       );
     } else {
       next = _appendEvent(
         next,
-        '${attackerPiece.definition.name} failed to break ${defenderPiece.definition.name} (${result.reason}).',
+        '${attackerPiece.definition.name} failed to break totem ${defenderUnit.unitId} (${result.reason}).',
       );
     }
 
@@ -687,6 +775,7 @@ class TurnEngine {
       ownerIndex: attackerPlayerIndex,
       unitId: attackerUnit.unitId,
     );
+
     return _finishCombatAndCheckWinner(
       next,
       attackerPlayerIndex: attackerPlayerIndex,
@@ -702,8 +791,7 @@ class TurnEngine {
     final defender = state.players[defenderPlayerIndex];
     final attacker = state.players[attackerPlayerIndex];
 
-    if (defender.health <= 0 ||
-        (defender.hadUnitsEver && defender.units.isEmpty)) {
+    if (_totalTotems(defender) <= 0) {
       var next = state.copyWith(
         phase: TurnPhase.gameOver,
         winnerIndex: attackerPlayerIndex,
@@ -714,7 +802,7 @@ class TurnEngine {
     }
 
     return state.copyWith(
-      phase: TurnPhase.mainActions,
+      phase: TurnPhase.attackStep,
       clearPendingCombat: true,
     );
   }
@@ -729,16 +817,16 @@ class TurnEngine {
     if (unitIndex == -1) {
       return state;
     }
+
     final units = List<UnitState>.from(player.units);
     units[unitIndex] = units[unitIndex].copyWith(attackedThisTurn: true);
     return _replacePlayer(state, ownerIndex, player.copyWith(units: units));
   }
 
-  GameState _removePieceFromUnit(
+  GameState _removeUnit(
     GameState state, {
     required int ownerIndex,
     required String unitId,
-    required int pieceIndex,
   }) {
     final player = state.players[ownerIndex];
     final unitIndex = _findUnitIndex(player, unitId);
@@ -746,41 +834,35 @@ class TurnEngine {
       return state;
     }
 
-    final units = List<UnitState>.from(player.units);
-    final unit = units[unitIndex];
-    final pieces = List<PieceInstance>.from(unit.pieces)..removeAt(pieceIndex);
-    if (pieces.isEmpty) {
-      units.removeAt(unitIndex);
-    } else {
-      final safeAttackerIndex =
-          (unit.attackingPieceIndex != null &&
-              unit.attackingPieceIndex! < pieces.length)
-          ? unit.attackingPieceIndex
-          : 0;
-      final safeDefenderIndex =
-          (unit.defendingPieceIndex != null &&
-              unit.defendingPieceIndex! < pieces.length)
-          ? unit.defendingPieceIndex
-          : null;
-      units[unitIndex] = unit.copyWith(
-        pieces: pieces,
-        attackingPieceIndex: safeAttackerIndex,
-        clearDefendingPieceIndex: safeDefenderIndex == null,
-        defendingPieceIndex: safeDefenderIndex,
-      );
-    }
+    final units = List<UnitState>.from(player.units)..removeAt(unitIndex);
     return _replacePlayer(state, ownerIndex, player.copyWith(units: units));
   }
 
-  bool _requiresDefenderSelection(GameState state) {
-    if (state.activePlayer.units.isEmpty ||
-        state.opposingPlayer.units.isEmpty) {
+  bool _hasPendingMandatoryAttacks(GameState state) {
+    if (state.phase != TurnPhase.attackStep) {
       return false;
     }
-    final nextTurnNumber = state.turnNumber + 1;
-    return state.opposingPlayer.units.any(
-      (unit) => unit.pieces.isNotEmpty && unit.summonedTurn < nextTurnNumber,
-    );
+
+    for (final unit in state.activePlayer.units) {
+      if (!_canUnitAttackThisStep(unit, turnNumber: state.turnNumber)) {
+        continue;
+      }
+      if (!_hasLegalAttackTarget(state)) {
+        continue;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool _hasLegalAttackTarget(GameState state) {
+    return state.opposingPlayer.units.any(_hasValidDefendingPiece);
+  }
+
+  bool _canUnitAttackThisStep(UnitState unit, {required int turnNumber}) {
+    return unit.pieces.isNotEmpty &&
+        unit.attackedThisTurn == false &&
+        unit.summonedTurn < turnNumber;
   }
 
   bool _hasValidDefendingPiece(UnitState unit) {
@@ -788,8 +870,8 @@ class TurnEngine {
     return index != null && index >= 0 && index < unit.pieces.length;
   }
 
-  bool _hasAnyTargetableDefendingUnits(PlayerState player) {
-    return player.units.any(_hasValidDefendingPiece);
+  int _totalTotems(PlayerState player) {
+    return player.units.length + player.totemsInHand;
   }
 
   int _requiredDraftPicks(GameState state, {required MatchRules rules}) {
@@ -800,17 +882,27 @@ class TurnEngine {
     return rules.standardDraft;
   }
 
-  bool _hasElementAdvantage(SpiritElement attacker, SpiritElement defender) {
-    return (attacker == SpiritElement.blue && defender == SpiritElement.red) ||
-        (attacker == SpiritElement.red && defender == SpiritElement.green) ||
-        (attacker == SpiritElement.green && defender == SpiritElement.blue);
+  bool _isColorProtected({
+    required SpiritElement defenderElement,
+    required SpiritElement attackerElement,
+  }) {
+    return (defenderElement == SpiritElement.red &&
+            attackerElement == SpiritElement.green) ||
+        (defenderElement == SpiritElement.green &&
+            attackerElement == SpiritElement.blue) ||
+        (defenderElement == SpiritElement.blue &&
+            attackerElement == SpiritElement.red);
   }
 
-  bool _hasModeAdvantage(CombatMode attackMode, CombatMode defenseMode) {
-    return (attackMode == CombatMode.physical &&
-            defenseMode == CombatMode.magical) ||
-        (attackMode == CombatMode.magical &&
-            defenseMode == CombatMode.physical);
+  bool _isModeProtected({
+    required CombatMode defenderDefenseMode,
+    required CombatMode attackerAttackMode,
+  }) {
+    return defenderDefenseMode == attackerAttackMode;
+  }
+
+  int _nextRng(int state) {
+    return (state * 1103515245 + 12345) & 0x7fffffff;
   }
 
   int _findPoolIndex(GameState state, String poolPieceId) {
