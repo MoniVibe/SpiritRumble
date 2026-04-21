@@ -88,6 +88,31 @@ void main() {
       expect(state.pool.length, 5);
     });
 
+    test('end turn skips defender selection when opponent has no units', () {
+      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
+      state = _apply(
+        engine,
+        state,
+        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+      );
+      state = _apply(
+        engine,
+        state,
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+      );
+
+      state = _apply(engine, state, EndTurnMove());
+
+      expect(state.activePlayerIndex, 1);
+      expect(state.phase, TurnPhase.draftFromPool);
+      expect(
+        state.eventLog.last,
+        contains('Turn 2: Shaman 2 drafts 2 from pool.'),
+      );
+    });
+
     test('play to new unit works', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
       state = _apply(
@@ -170,12 +195,6 @@ void main() {
       );
       final p1UnitId = state.activePlayer.units.first.unitId;
       state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        ChooseDefenderMove(unitId: p1UnitId, pieceIndex: 0),
-        rules: localRules,
-      );
 
       state = _apply(
         engine,
@@ -312,12 +331,6 @@ void main() {
       expect(deniedAttack.reason, contains('same turn it was summoned'));
 
       state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        ChooseDefenderMove(unitId: attackerUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
 
       state = _apply(
         engine,
@@ -351,23 +364,62 @@ void main() {
     });
 
     test('defender choice persists through opponent turn', () {
-      var state = engine.newMatch(draftCatalog: catalog, rules: rules);
-      state = _draftByDefinition(engine, state, 'flame_alpha', rules: rules);
+      const localRules = MatchRules(
+        firstPlayerOpeningDraft: 1,
+        standardDraft: 1,
+      );
+      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
+      state = _draftByDefinition(
+        engine,
+        state,
+        'flame_alpha',
+        rules: localRules,
+      );
       state = _apply(
         engine,
         state,
         PlayToNewUnitMove(
           handPieceId: state.activePlayer.hand.first.instanceId,
         ),
-        rules: rules,
+        rules: localRules,
       );
       final p1UnitId = state.activePlayer.units.first.unitId;
-      state = _apply(engine, state, EndTurnMove(), rules: rules);
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      state = _draftByDefinition(
+        engine,
+        state,
+        'grove_wall',
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+        rules: localRules,
+      );
+      final p2UnitId = state.activePlayer.units.first.unitId;
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      state = _apply(
+        engine,
+        state,
+        ChooseDefenderMove(unitId: p2UnitId, pieceIndex: 0),
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: localRules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      expect(state.phase, TurnPhase.chooseDefenders);
       state = _apply(
         engine,
         state,
         ChooseDefenderMove(unitId: p1UnitId, pieceIndex: 0),
-        rules: rules,
+        rules: localRules,
       );
 
       expect(state.activePlayerIndex, 1);
@@ -403,12 +455,6 @@ void main() {
         rules: localRules,
       );
       state = _apply(engine, state, EndTurnMove(), rules: localRules);
-      state = _apply(
-        engine,
-        state,
-        ChooseDefenderMove(unitId: attackerUnitId, pieceIndex: 0),
-        rules: localRules,
-      );
 
       state = _draftByDefinition(
         engine,

@@ -489,6 +489,14 @@ class TurnEngine {
   }
 
   GameState _applyEndTurn(GameState state, {required MatchRules rules}) {
+    if (!_requiresDefenderSelection(state)) {
+      var next = _appendEvent(
+        state,
+        '${state.activePlayer.id} skipped defender selection (no incoming threats).',
+      );
+      return _handoffTurn(next, rules: rules);
+    }
+
     var next = state.copyWith(phase: TurnPhase.chooseDefenders);
     next = _appendEvent(
       next,
@@ -774,6 +782,17 @@ class TurnEngine {
       }
     }
     return true;
+  }
+
+  bool _requiresDefenderSelection(GameState state) {
+    if (state.activePlayer.units.isEmpty ||
+        state.opposingPlayer.units.isEmpty) {
+      return false;
+    }
+    final nextTurnNumber = state.turnNumber + 1;
+    return state.opposingPlayer.units.any(
+      (unit) => unit.pieces.isNotEmpty && unit.summonedTurn < nextTurnNumber,
+    );
   }
 
   int _requiredDraftPicks(GameState state, {required MatchRules rules}) {
