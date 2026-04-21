@@ -263,6 +263,11 @@ class TurnEngine {
       return const CommandCheck.denied('attacker unit not found');
     }
     final attackerUnit = state.activePlayer.units[attackerUnitIndex];
+    if (attackerUnit.summonedTurn == state.turnNumber) {
+      return const CommandCheck.denied(
+        'unit cannot attack on the same turn it was summoned',
+      );
+    }
     if (attackerUnit.attackedThisTurn) {
       return const CommandCheck.denied('unit already attacked this turn');
     }
@@ -371,6 +376,7 @@ class TurnEngine {
           unitId: 'u${state.nextUnitId}',
           ownerIndex: state.activePlayerIndex,
           pieces: <PieceInstance>[piece],
+          summonedTurn: state.turnNumber,
           attackingPieceIndex: 0,
           defendingPieceIndex: null,
           attackedThisTurn: false,

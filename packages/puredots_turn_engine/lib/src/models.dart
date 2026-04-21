@@ -61,6 +61,7 @@ class UnitState {
     required this.unitId,
     required this.ownerIndex,
     required this.pieces,
+    required this.summonedTurn,
     required this.attackingPieceIndex,
     required this.defendingPieceIndex,
     required this.attackedThisTurn,
@@ -69,6 +70,7 @@ class UnitState {
   final String unitId;
   final int ownerIndex;
   final List<PieceInstance> pieces;
+  final int summonedTurn;
   final int? attackingPieceIndex;
   final int? defendingPieceIndex;
   final bool attackedThisTurn;
@@ -77,6 +79,7 @@ class UnitState {
     String? unitId,
     int? ownerIndex,
     List<PieceInstance>? pieces,
+    int? summonedTurn,
     int? attackingPieceIndex,
     bool clearAttackingPieceIndex = false,
     int? defendingPieceIndex,
@@ -87,6 +90,7 @@ class UnitState {
       unitId: unitId ?? this.unitId,
       ownerIndex: ownerIndex ?? this.ownerIndex,
       pieces: pieces ?? this.pieces,
+      summonedTurn: summonedTurn ?? this.summonedTurn,
       attackingPieceIndex: clearAttackingPieceIndex
           ? null
           : (attackingPieceIndex ?? this.attackingPieceIndex),

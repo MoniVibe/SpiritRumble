@@ -9,6 +9,7 @@ import '../../application/battle_controller.dart';
 import '../../application/battle_intents.dart';
 import '../../application/battle_view_state.dart';
 import '../../application/drag_session.dart';
+import '../../application/opponent_ai.dart';
 import '../../application/target_preview.dart';
 import '../../application/target_resolver.dart';
 import '../../domain/battle_view_models.dart';
@@ -24,7 +25,7 @@ class SpritRumbleScreen extends StatefulWidget {
 }
 
 class _SpritRumbleScreenState extends State<SpritRumbleScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   static const double _handCardWidth = 116;
   static const double _handCardHeight = 156;
   static const SpringDescription _snapSpring = SpringDescription(
@@ -36,15 +37,23 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
   final GlobalKey _interactionLayerKey = GlobalKey();
   final GlobalKey _newUnitDropKey = GlobalKey();
   final GlobalKey _playerHandDropKey = GlobalKey();
+  final GlobalKey _opponentShamanKey = GlobalKey();
   final Map<String, GlobalKey> _unitDropKeys = <String, GlobalKey>{};
+  final Map<String, GlobalKey> _opponentUnitKeys = <String, GlobalKey>{};
   final BattleController _controller = BattleController();
   final DropTargetResolver _targetResolver = const DropTargetResolver();
 
   late final AnimationController _snapController;
+  late final AnimationController _attackController;
   HandDragSession? _dragSession;
   DropTargetPreview? _hoverTarget;
+  _AttackVisual? _attackVisual;
   Offset _snapFrom = Offset.zero;
+  String? _hoverAttackTargetUnitId;
+  bool _hoverDirectAttack = false;
   bool _logExpanded = false;
+  bool _aiRunning = false;
+  bool _aiQueued = false;
 
   BattleViewState get _view => _controller.viewState;
 
@@ -55,11 +64,24 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
         AnimationController(vsync: this, lowerBound: 0, upperBound: 1)
           ..addListener(_onSnapTick)
           ..addStatusListener(_onSnapStatusChange);
+    _attackController =
+        AnimationController(
+            vsync: this,
+            lowerBound: 0,
+            upperBound: 1,
+            duration: const Duration(milliseconds: 320),
+          )
+          ..addListener(_onAttackTick)
+          ..addStatusListener(_onAttackStatusChange);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scheduleOpponentAiIfNeeded();
+    });
   }
 
   @override
   void dispose() {
     _snapController.dispose();
+    _attackController.dispose();
     super.dispose();
   }
 
@@ -86,18 +108,100 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     setState(_clearDragState);
   }
 
+  void _onAttackTick() {
+    if (_attackVisual == null) {
+      return;
+    }
+    setState(() {});
+  }
+
+  void _onAttackStatusChange(AnimationStatus status) {
+    if (status != AnimationStatus.completed) {
+      return;
+    }
+    _attackController.reset();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _attackVisual = null;
+    });
+  }
+
   void _resetMatch() {
     setState(() {
+      _attackController.stop();
+      _attackController.value = 0;
+      _attackVisual = null;
+      _hoverAttackTargetUnitId = null;
+      _hoverDirectAttack = false;
+      _aiRunning = false;
+      _aiQueued = false;
       _controller.resetMatch();
       _clearDragState();
       _logExpanded = false;
     });
+    _scheduleOpponentAiIfNeeded();
   }
 
-  bool _dispatch(GameCommand command) {
+  bool _dispatch(GameCommand command, {bool scheduleAi = true}) {
     final applied = _controller.dispatch(command);
     setState(() {});
+    if (scheduleAi) {
+      _scheduleOpponentAiIfNeeded();
+    }
     return applied;
+  }
+
+  void _scheduleOpponentAiIfNeeded() {
+    if (_aiRunning || _aiQueued || !mounted) {
+      return;
+    }
+    final state = _view.gameState;
+    if (state.hasWinner || state.activePlayerIndex != 1) {
+      return;
+    }
+    _aiQueued = true;
+    Future<void>.delayed(const Duration(milliseconds: 220), () async {
+      _aiQueued = false;
+      if (!mounted) {
+        return;
+      }
+      await _runOpponentAiTurn();
+    });
+  }
+
+  Future<void> _runOpponentAiTurn() async {
+    if (_aiRunning || !mounted) {
+      return;
+    }
+    _aiRunning = true;
+    try {
+      var guard = 0;
+      while (mounted &&
+          _view.gameState.activePlayerIndex == 1 &&
+          !_view.gameState.hasWinner &&
+          guard < 64) {
+        guard++;
+        final next = OpponentAi.pickNextCommand(
+          _view.gameState,
+          (command) => _controller.canApply(command).allowed,
+        );
+        if (next == null) {
+          break;
+        }
+        final applied = next is AttackUnitMove
+            ? _performResolvedAttack(next, animate: false, scheduleAi: false)
+            : _dispatch(next, scheduleAi: false);
+        if (!applied) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 230));
+      }
+    } finally {
+      _aiRunning = false;
+      _scheduleOpponentAiIfNeeded();
+    }
   }
 
   @override
@@ -129,15 +233,26 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                             player: view.opposingPlayer,
                             isActive: state.activePlayerIndex == 1,
                             title: 'Opponent Shaman',
+                            bandKey: _opponentShamanKey,
+                            incomingPreview:
+                                view.isMainPhase &&
+                                view.selectedAttackerUnitId != null &&
+                                view.opposingPlayer.units.isEmpty,
+                            incomingHover: _hoverDirectAttack,
+                            onDirectAttackHoverChanged: (hovered) {
+                              if (!mounted) {
+                                return;
+                              }
+                              setState(() {
+                                _hoverDirectAttack = hovered;
+                              });
+                            },
                             onTapDirectAttack:
                                 view.selectedAttackerUnitId != null &&
                                     view.isMainPhase &&
                                     view.opposingPlayer.units.isEmpty
-                                ? () => _dispatch(
-                                    BattleIntents.attack(
-                                      view.selectedAttackerUnitId!,
-                                    ),
-                                  )
+                                ? () =>
+                                      _queueAttack(view.selectedAttackerUnitId!)
                                 : null,
                           ),
                         ),
@@ -161,8 +276,9 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                     ),
                     _buildHudOverlay(state, winner),
                     _buildTargetingLineOverlay(),
+                    _buildAttackAnimationOverlay(),
                     if (view.isDraftPhase) _buildDraftTrayOverlay(view),
-                    _buildEventLogOverlay(state),
+                    _buildEventLogOverlay(view),
                     if (view.lastError != null)
                       Positioned(
                         left: 8,
@@ -247,36 +363,52 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     required PlayerState player,
     required bool isActive,
     required String title,
+    GlobalKey? bandKey,
+    bool incomingPreview = false,
+    bool incomingHover = false,
+    ValueChanged<bool>? onDirectAttackHoverChanged,
     VoidCallback? onTapDirectAttack,
   }) {
-    return _BandFrame(
-      title: title,
-      child: Row(
-        children: <Widget>[
-          CircleAvatar(
-            radius: 16,
-            child: Text(player.id.substring(player.id.length - 1)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: <Widget>[
-                Text(player.id),
-                Text('HP ${player.health}'),
-                Text('Hand ${player.hand.length}'),
-                Text('Units ${player.units.length}'),
-                if (isActive) const Chip(label: Text('Active')),
-              ],
+    return Container(
+      key: bandKey,
+      child: _BandFrame(
+        title: title,
+        borderColor: incomingHover
+            ? const Color(0xFFFFB74D)
+            : (incomingPreview
+                  ? Colors.redAccent.withValues(alpha: 0.55)
+                  : null),
+        child: Row(
+          children: <Widget>[
+            CircleAvatar(
+              radius: 16,
+              child: Text(player.id.substring(player.id.length - 1)),
             ),
-          ),
-          if (onTapDirectAttack != null)
-            FilledButton.tonal(
-              onPressed: onTapDirectAttack,
-              child: const Text('Direct Attack'),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: <Widget>[
+                  Text(player.id),
+                  Text('HP ${player.health}'),
+                  Text('Hand ${player.hand.length}'),
+                  Text('Units ${player.units.length}'),
+                  if (isActive) const Chip(label: Text('Active')),
+                ],
+              ),
             ),
-        ],
+            if (onTapDirectAttack != null)
+              MouseRegion(
+                onEnter: (_) => onDirectAttackHoverChanged?.call(true),
+                onExit: (_) => onDirectAttackHoverChanged?.call(false),
+                child: FilledButton.tonal(
+                  onPressed: onTapDirectAttack,
+                  child: const Text('Direct Attack'),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -292,18 +424,40 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                 final unit = view.opposingPlayer.units[index];
                 final canTarget =
                     view.selectedAttackerUnitId != null && view.isMainPhase;
-                return _UnitCard(
-                  unit: unit,
-                  selectedUnitId: null,
-                  onPieceTap: null,
-                  onUnitTap: canTarget
-                      ? () => _dispatch(
-                          BattleIntents.attack(
-                            view.selectedAttackerUnitId!,
-                            targetUnitId: unit.unitId,
-                          ),
-                        )
-                      : null,
+                final incomingHover = _hoverAttackTargetUnitId == unit.unitId;
+                return Container(
+                  key: _opponentUnitKey(unit.unitId),
+                  child: MouseRegion(
+                    onEnter: (_) {
+                      if (!canTarget) {
+                        return;
+                      }
+                      setState(() {
+                        _hoverAttackTargetUnitId = unit.unitId;
+                      });
+                    },
+                    onExit: (_) {
+                      if (_hoverAttackTargetUnitId != unit.unitId) {
+                        return;
+                      }
+                      setState(() {
+                        _hoverAttackTargetUnitId = null;
+                      });
+                    },
+                    child: _UnitCard(
+                      unit: unit,
+                      selectedUnitId: null,
+                      onPieceTap: null,
+                      incomingPreview: canTarget,
+                      incomingHovered: incomingHover,
+                      onUnitTap: canTarget
+                          ? () => _queueAttack(
+                              view.selectedAttackerUnitId!,
+                              targetUnitId: unit.unitId,
+                            )
+                          : null,
+                    ),
+                  ),
                 );
               },
               separatorBuilder: (_, _) => const SizedBox(width: 8),
@@ -359,6 +513,12 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                     child: _UnitCard(
                       unit: unit,
                       selectedUnitId: view.selectedAttackerUnitId,
+                      outgoingReady:
+                          view.isMainPhase &&
+                          _canUnitAttackThisTurn(
+                            unit,
+                            view.gameState.turnNumber,
+                          ),
                       onPieceTap: (int pieceIndex) {
                         if (view.isChooseDefendersPhase) {
                           _dispatch(
@@ -572,7 +732,9 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     );
   }
 
-  Widget _buildEventLogOverlay(GameState state) {
+  Widget _buildEventLogOverlay(BattleViewState view) {
+    final state = view.gameState;
+    final telemetry = view.telemetry;
     final compact = !_logExpanded;
     return Positioned(
       right: 8,
@@ -595,7 +757,7 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              'Event Log ${state.eventLog.length}',
+                              'Log ${state.eventLog.length} | C ${telemetry.appliedCommands}/${telemetry.deniedCommands}',
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -606,15 +768,68 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
                   )
                 : Column(
                     children: <Widget>[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          'Cmd applied ${telemetry.appliedCommands}  denied ${telemetry.deniedCommands}  '
+                          'attacks ${telemetry.attackDeclarations}  kills ${telemetry.destroyedEvents}  '
+                          'direct ${telemetry.directHitEvents}',
+                          style: Theme.of(context).textTheme.labelSmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                       ListTile(
                         dense: true,
                         title: const Text('Event Log'),
-                        subtitle: Text('${state.eventLog.length} entries'),
+                        subtitle: Text(
+                          '${state.eventLog.length} entries | saved logs ${view.recentDiagnostics.length}/5',
+                        ),
                         trailing: IconButton(
                           icon: const Icon(Icons.expand_more),
                           onPressed: () => setState(() => _logExpanded = false),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Diagnostics: ${view.diagnosticsPath}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          ),
+                        ),
+                      ),
+                      if (view.recentDiagnostics.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              'Latest: T${view.recentDiagnostics.first.turnNumber}  '
+                              'Winner ${view.recentDiagnostics.first.winnerId}  '
+                              'Events ${view.recentDiagnostics.first.eventLog.length}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall,
+                            ),
+                          ),
+                        ),
                       Expanded(
                         child: ListView.builder(
                           reverse: true,
@@ -764,6 +979,96 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
     );
   }
 
+  GlobalKey _opponentUnitKey(String unitId) {
+    return _opponentUnitKeys.putIfAbsent(
+      unitId,
+      () => GlobalKey(debugLabel: 'opponent_$unitId'),
+    );
+  }
+
+  void _queueAttack(String attackerUnitId, {String? targetUnitId}) {
+    _hoverAttackTargetUnitId = null;
+    _hoverDirectAttack = false;
+    final command = BattleIntents.attack(
+      attackerUnitId,
+      targetUnitId: targetUnitId,
+    );
+    _performResolvedAttack(command, animate: true);
+  }
+
+  bool _performResolvedAttack(
+    AttackUnitMove command, {
+    required bool animate,
+    bool scheduleAi = true,
+  }) {
+    final visual = animate ? _buildAttackVisualSnapshot(command) : null;
+    final applied = _dispatch(command, scheduleAi: scheduleAi);
+    if (applied && visual != null) {
+      _startAttackVisual(visual);
+    }
+    return applied;
+  }
+
+  _AttackVisual? _buildAttackVisualSnapshot(AttackUnitMove command) {
+    final fromRect = _targetResolver.rectForKey(
+      _unitDropKey(command.attackerUnitId),
+    );
+    final toRect = command.targetUnitId == null
+        ? _targetResolver.rectForKey(_opponentShamanKey)
+        : _targetResolver.rectForKey(_opponentUnitKey(command.targetUnitId!));
+    final layerContext = _interactionLayerKey.currentContext;
+    if (fromRect == null || toRect == null || layerContext == null) {
+      return null;
+    }
+    final render = layerContext.findRenderObject();
+    if (render is! RenderBox || !render.hasSize) {
+      return null;
+    }
+    final activeUnits = _view.gameState.activePlayer.units;
+    if (activeUnits.isEmpty) {
+      return null;
+    }
+    final attackerUnit = activeUnits.firstWhere(
+      (unit) => unit.unitId == command.attackerUnitId,
+      orElse: () => activeUnits.first,
+    );
+    if (attackerUnit.pieces.isEmpty) {
+      return null;
+    }
+    final attackerPiece =
+        attackerUnit.pieces[attackerUnit.attackingPieceIndex ?? 0].definition;
+    return _AttackVisual(
+      from: render.globalToLocal(fromRect.center),
+      to: render.globalToLocal(toRect.center),
+      color: _elementColor(attackerPiece.element),
+      piece: attackerPiece,
+    );
+  }
+
+  void _startAttackVisual(_AttackVisual visual) {
+    setState(() {
+      _attackVisual = visual;
+    });
+    _attackController
+      ..stop()
+      ..value = 0
+      ..forward();
+  }
+
+  Color _elementColor(SpiritElement element) {
+    return switch (element) {
+      SpiritElement.red => const Color(0xFFEF5350),
+      SpiritElement.green => const Color(0xFF66BB6A),
+      SpiritElement.blue => const Color(0xFF42A5F5),
+    };
+  }
+
+  bool _canUnitAttackThisTurn(UnitState unit, int turnNumber) {
+    return unit.pieces.isNotEmpty &&
+        !unit.attackedThisTurn &&
+        unit.summonedTurn < turnNumber;
+  }
+
   Widget _buildTargetingLineOverlay() {
     final session = _dragSession;
     final target = _hoverTarget;
@@ -807,6 +1112,86 @@ class _SpritRumbleScreenState extends State<SpritRumbleScreen>
       ),
     );
   }
+
+  Widget _buildAttackAnimationOverlay() {
+    final visual = _attackVisual;
+    if (visual == null) {
+      return const SizedBox.shrink();
+    }
+    final t = _attackController.value;
+    final outgoing = t <= 0.58;
+    final segmentT = outgoing ? (t / 0.58) : ((t - 0.58) / 0.42);
+    final curved = outgoing
+        ? Curves.easeOutCubic.transform(segmentT.clamp(0.0, 1.0))
+        : Curves.easeInCubic.transform(segmentT.clamp(0.0, 1.0));
+    final position = outgoing
+        ? Offset.lerp(visual.from, visual.to, curved)!
+        : Offset.lerp(visual.to, visual.from, curved)!;
+    final collisionStrength = (1 - ((t - 0.58).abs() / 0.12))
+        .clamp(0.0, 1.0)
+        .toDouble();
+
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Stack(
+          children: <Widget>[
+            if (collisionStrength > 0)
+              Positioned(
+                left: visual.to.dx - 26,
+                top: visual.to.dy - 26,
+                child: Opacity(
+                  opacity: collisionStrength * 0.65,
+                  child: Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: visual.color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+            Positioned(
+              left: position.dx - 30,
+              top: position.dy - 40,
+              child: Transform.scale(
+                scale: 1 + (collisionStrength * 0.25),
+                child: Transform.rotate(
+                  angle: outgoing ? 0 : 0.05,
+                  child: SizedBox(
+                    width: 60,
+                    height: 80,
+                    child: SpiritCardView(
+                      piece: visual.piece,
+                      width: 60,
+                      height: 80,
+                      elevated: true,
+                      highlighted: false,
+                      angle: 0,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AttackVisual {
+  const _AttackVisual({
+    required this.from,
+    required this.to,
+    required this.color,
+    required this.piece,
+  });
+
+  final Offset from;
+  final Offset to;
+  final Color color;
+  final PieceDefinition piece;
 }
 
 class _BandFrame extends StatelessWidget {
@@ -856,56 +1241,185 @@ class _BandFrame extends StatelessWidget {
   }
 }
 
-class _UnitCard extends StatelessWidget {
+class _UnitCard extends StatefulWidget {
   const _UnitCard({
     required this.unit,
     required this.selectedUnitId,
     required this.onPieceTap,
     required this.onUnitTap,
+    this.outgoingReady = false,
+    this.incomingPreview = false,
+    this.incomingHovered = false,
   });
 
   final UnitState unit;
   final String? selectedUnitId;
   final void Function(int pieceIndex)? onPieceTap;
   final VoidCallback? onUnitTap;
+  final bool outgoingReady;
+  final bool incomingPreview;
+  final bool incomingHovered;
+
+  @override
+  State<_UnitCard> createState() => _UnitCardState();
+}
+
+class _UnitCardState extends State<_UnitCard> {
+  int? _hoveredPieceIndex;
+  bool _hoveredUnit = false;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onUnitTap,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Wrap(
-                spacing: 8,
-                children: <Widget>[
-                  Text(unit.unitId),
-                  if (unit.attackedThisTurn)
-                    const Chip(label: Text('Attacked')),
-                  if (selectedUnitId == unit.unitId)
-                    const Chip(label: Text('Selected')),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: List<Widget>.generate(unit.pieces.length, (int i) {
-                  return OutlinedButton(
-                    onPressed: onPieceTap == null ? null : () => onPieceTap!(i),
-                    child: Text(
-                      '${i == unit.attackingPieceIndex ? 'ATK>' : ''} '
-                      '${i == unit.defendingPieceIndex ? 'DEF>' : ''}'
-                      '${pieceLabel(unit.pieces[i].definition)}',
+    final unit = widget.unit;
+    final selectedUnitId = widget.selectedUnitId;
+    final borderColor = widget.incomingHovered
+        ? const Color(0xFFFFB74D)
+        : (widget.incomingPreview
+              ? Colors.redAccent.withValues(alpha: 0.55)
+              : (widget.outgoingReady
+                    ? Colors.lightGreenAccent.withValues(alpha: 0.5)
+                    : (_hoveredUnit && widget.onUnitTap != null
+                          ? Colors.white38
+                          : Colors.white10)));
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoveredUnit = true),
+      onExit: (_) => setState(() => _hoveredUnit = false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        width: 280,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: borderColor),
+        ),
+        child: Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Wrap(
+                  spacing: 8,
+                  children: <Widget>[
+                    Text(unit.unitId),
+                    if (unit.attackedThisTurn)
+                      const Chip(label: Text('Attacked')),
+                    if (selectedUnitId == unit.unitId)
+                      const Chip(label: Text('Selected')),
+                    if (widget.outgoingReady)
+                      const _StatusChip(label: 'OUT', color: Color(0xFF66BB6A)),
+                    if (widget.incomingPreview)
+                      _StatusChip(
+                        label: widget.incomingHovered ? 'TARGET' : 'IN',
+                        color: widget.incomingHovered
+                            ? const Color(0xFFFFB74D)
+                            : const Color(0xFFEF5350),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: List<Widget>.generate(unit.pieces.length, (
+                        int i,
+                      ) {
+                        final piece = unit.pieces[i];
+                        final isAttacking = i == unit.attackingPieceIndex;
+                        final isDefending = i == unit.defendingPieceIndex;
+                        final highlighted =
+                            _hoveredPieceIndex == i ||
+                            isAttacking ||
+                            isDefending;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: MouseRegion(
+                            onEnter: (_) =>
+                                setState(() => _hoveredPieceIndex = i),
+                            onExit: (_) {
+                              if (_hoveredPieceIndex != i) {
+                                return;
+                              }
+                              setState(() => _hoveredPieceIndex = null);
+                            },
+                            child: GestureDetector(
+                              onTap: () {
+                                if (widget.onPieceTap != null) {
+                                  widget.onPieceTap!(i);
+                                  return;
+                                }
+                                widget.onUnitTap?.call();
+                              },
+                              child: SizedBox(
+                                width: 96,
+                                height: 130,
+                                child: Stack(
+                                  children: <Widget>[
+                                    SpiritCardView(
+                                      piece: piece.definition,
+                                      width: 96,
+                                      height: 130,
+                                      elevated: false,
+                                      highlighted: highlighted,
+                                      angle: 0,
+                                    ),
+                                    if (isAttacking)
+                                      const Positioned(
+                                        left: 6,
+                                        bottom: 6,
+                                        child: _StatusChip(
+                                          label: 'ATK',
+                                          color: Color(0xFFEF5350),
+                                        ),
+                                      ),
+                                    if (isDefending)
+                                      const Positioned(
+                                        right: 6,
+                                        bottom: 6,
+                                        child: _StatusChip(
+                                          label: 'DEF',
+                                          color: Color(0xFF42A5F5),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
                     ),
-                  );
-                }),
-              ),
-            ],
+                  ),
+                ),
+              ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

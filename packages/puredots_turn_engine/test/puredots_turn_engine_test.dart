@@ -273,48 +273,82 @@ void main() {
       expect(noKill.destroyed, isFalse);
     });
 
-    test(
-      'direct attack on turn 1 does not auto-win if opponent never deployed',
-      () {
-        const localRules = MatchRules(
-          firstPlayerOpeningDraft: 1,
-          standardDraft: 1,
-        );
-        var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
+    test('freshly summoned units cannot attack until the next turn', () {
+      const localRules = MatchRules(
+        firstPlayerOpeningDraft: 1,
+        standardDraft: 1,
+      );
+      var state = engine.newMatch(draftCatalog: catalog, rules: localRules);
 
-        state = _draftByDefinition(
-          engine,
-          state,
-          'flame_alpha',
-          rules: localRules,
-        );
-        state = _apply(
-          engine,
-          state,
-          PlayToNewUnitMove(
-            handPieceId: state.activePlayer.hand.first.instanceId,
-          ),
-          rules: localRules,
-        );
-        final attackerUnitId = state.activePlayer.units.first.unitId;
-        state = _apply(
-          engine,
-          state,
-          ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
-          rules: localRules,
-        );
-        state = _apply(
-          engine,
-          state,
-          AttackUnitMove(attackerUnitId: attackerUnitId),
-          rules: localRules,
-        );
+      state = _draftByDefinition(
+        engine,
+        state,
+        'flame_alpha',
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        PlayToNewUnitMove(
+          handPieceId: state.activePlayer.hand.first.instanceId,
+        ),
+        rules: localRules,
+      );
+      final attackerUnitId = state.activePlayer.units.first.unitId;
+      state = _apply(
+        engine,
+        state,
+        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
+        rules: localRules,
+      );
 
-        expect(state.winnerIndex, isNull);
-        expect(state.players[1].health, 20);
-        expect(state.phase, TurnPhase.mainActions);
-      },
-    );
+      final deniedAttack = engine.applyCommand(
+        state,
+        state.activePlayerIndex,
+        AttackUnitMove(attackerUnitId: attackerUnitId),
+        rules: localRules,
+      );
+      expect(deniedAttack.applied, isFalse);
+      expect(deniedAttack.reason, contains('same turn it was summoned'));
+
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+      state = _apply(
+        engine,
+        state,
+        ChooseDefenderMove(unitId: attackerUnitId, pieceIndex: 0),
+        rules: localRules,
+      );
+
+      state = _apply(
+        engine,
+        state,
+        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: localRules,
+      );
+      state = _apply(engine, state, EndTurnMove(), rules: localRules);
+
+      state = _apply(
+        engine,
+        state,
+        DraftFromPoolMove(poolPieceId: state.pool.first.instanceId),
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        ChooseAttackerMove(unitId: attackerUnitId, pieceIndex: 0),
+        rules: localRules,
+      );
+      state = _apply(
+        engine,
+        state,
+        AttackUnitMove(attackerUnitId: attackerUnitId),
+        rules: localRules,
+      );
+
+      expect(state.winnerIndex, isNull);
+      expect(state.players[1].health, 20);
+    });
 
     test('defender choice persists through opponent turn', () {
       var state = engine.newMatch(draftCatalog: catalog, rules: rules);
